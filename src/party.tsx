@@ -1,12 +1,58 @@
 // Buyer details form, shared by the composer and the Buyers page.
 // It shows the same field problems MyInvois would reject a document for.
 import { useState } from 'react';
-import { BadgeCheck, CircleHelp, SearchCheck, TriangleAlert } from 'lucide-react';
+import { BadgeCheck, CircleHelp, QrCode, SearchCheck, TriangleAlert } from 'lucide-react';
 import type { IdType, Party, TinStatus } from './types';
 import { STATES, checkMykad, partyProblems } from './lib/rules';
 import { now } from './lib/clock';
-import { verifyTin } from './state/actions';
+import type { TaxpayerInfo } from './lib/myinvois';
+import { useApp } from './state/store';
+import { findTin, partyFromTaxpayer, readTaxpayerQr, verifyTin } from './state/actions';
 import { Button, Chip, Field, Input, Segmented, Select, ic } from './ui';
+
+/**
+ * Fills details from a taxpayer's MyInvois QR code, through the Taxpayer's QR Code API. The
+ * text is what a scanner reads from the code. Live workspace only.
+ */
+export function QrFill({ id, onInfo, label = 'Fill in from a MyInvois QR code' }: { id: string; onInfo: (x: TaxpayerInfo) => void; label?: string }) {
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState('');
+  const [busy, setBusy] = useState(false);
+  if (!open) {
+    return (
+      <button type="button" className="link-btn small" onClick={() => setOpen(true)} id={`${id}-open`}>
+        {ic(QrCode, 'ico-sm')} {label}
+      </button>
+    );
+  }
+  const go = async () => {
+    setBusy(true);
+    const x = await readTaxpayerQr(text);
+    setBusy(false);
+    if (!x) return;
+    onInfo(x);
+    setOpen(false);
+    setText('');
+  };
+  return (
+    <div className="input-row">
+      <Input
+        id={`${id}-text`}
+        value={text}
+        placeholder="Text from the taxpayer's QR code"
+        aria-label="Text from the taxpayer's MyInvois QR code"
+        autoComplete="off"
+        spellCheck={false}
+        className="mono-input"
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => e.key === 'Enter' && text.trim() && go()}
+      />
+      <Button busy={busy} disabled={!text.trim()} onClick={go} id={`${id}-go`}>
+        Fill in
+      </Button>
+    </div>
+  );
+}
 
 export interface Problem {
   message: string;
@@ -64,7 +110,9 @@ export function PartyFields({
   /** Show the TIN status chip (the composer shows it on the buyer card instead). */
   tinChip?: boolean;
 }) {
+  const live = useApp().workspace === 'live';
   const [checking, setChecking] = useState(false);
+  const [finding, setFinding] = useState(false);
   const probs = { ...problemsOf(party), ...extra };
   const set = (patch: Partial<Party>) => onChange({ ...party, ...patch });
   const setAddr = (patch: Partial<Party['address']>) => onChange({ ...party, address: { ...party.address, ...patch } });
@@ -99,13 +147,36 @@ export function PartyFields({
   const check = async () => {
     touch('tin');
     setChecking(true);
-    const r = await verifyTin(party.tin);
+    const r = await verifyTin(party);
     setChecking(false);
     onTinStatus(r, now());
   };
 
+  // Search Taxpayer's TIN, for buyers who know their ID number but not their TIN.
+  const canFind = live && tinStatus !== 'verified' && (!party.tin.trim() || tinStatus === 'not-found') && !!(party.idValue.trim() || party.name.trim());
+  const find = async () => {
+    setFinding(true);
+    const tin = await findTin(party);
+    setFinding(false);
+    if (!tin) return;
+    set({ tin });
+    onTinStatus('verified', now());
+  };
+
   return (
     <div className="form-grid">
+      {live && (
+        <div className="span-all">
+          <QrFill
+            id={`${idp}-qr`}
+            label="Fill in from the buyer's MyInvois QR code"
+            onInfo={(x) => {
+              onChange(partyFromTaxpayer(x));
+              onTinStatus('verified', now());
+            }}
+          />
+        </div>
+      )}
       <div className="span-all row" style={{ justifyContent: 'space-between' }}>
         <Segmented
           id={`${idp}-kind`}
@@ -135,6 +206,13 @@ export function PartyFields({
         htmlFor={`${idp}-tin`}
         error={err('tin') ?? (tinStatus === 'not-found' ? 'LHDN has no record of this TIN. Check it with the buyer.' : undefined)}
         hint={tinStatus === 'verified' ? 'Matched with LHDN.' : party.kind === 'individual' ? 'Starts with IG, like IG12345678912.' : 'Starts with C and ends in 0.'}
+        action={
+          canFind ? (
+            <button type="button" className="link-btn small" onClick={find} disabled={finding} id={`${idp}-tin-find`}>
+              {finding ? 'Searching…' : party.idValue.trim() ? 'Find it from the ID' : 'Find it by name'}
+            </button>
+          ) : undefined
+        }
       >
         <div className="input-row">
           <Input

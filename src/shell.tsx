@@ -8,6 +8,7 @@ import {
   ChevronsUpDown,
   CircleAlert,
   CircleCheck,
+  FileDown,
   FileText,
   FlaskConical,
   House,
@@ -16,6 +17,7 @@ import {
   ListChecks,
   Menu,
   Package,
+  PlugZap,
   Plus,
   RotateCcw,
   Settings,
@@ -29,9 +31,10 @@ import type { GuideKey, State } from './types';
 import { useApp } from './state/store';
 import { navigate, useRoute, type Route } from './state/nav';
 import { activeBiz, attention, clientState } from './state/select';
-import { openClient, resetDemo, setGuideOpen, switchPersona } from './state/actions';
+import { openClient, openWorkspace, resetDemo, setGuideOpen, switchPersona } from './state/actions';
+import { useLive } from './state/live';
 import { dismiss, useToasts } from './state/toast';
-import { date, time } from './lib/format';
+import { date, plural, time } from './lib/format';
 import { Avatar, Button, Modal, cx, ic, useNow } from './ui';
 
 // ---------------------------------------------------------------------------
@@ -60,6 +63,7 @@ function navFor(s: State): NavDef[] {
   return [
     { name: 'today', label: 'Today', icon: House },
     { name: 'invoices', label: 'E-invoices', icon: FileText },
+    { name: 'received', label: 'Received', icon: FileDown },
     { name: 'requests', label: 'Buyer requests', icon: Inbox, badge: pending },
     { name: 'monthend', label: 'Month-end', icon: CalendarCheck },
     { name: 'buyers', label: 'Buyers', icon: Users },
@@ -90,8 +94,10 @@ function Switcher({ onNavigate }: { onNavigate?: () => void }) {
     };
   }, [open]);
   const accountant = s.persona === 'accountant';
-  const name = biz ? biz.name : s.firm.name;
+  const live = s.workspace === 'live';
+  const name = biz ? biz.name || biz.short : s.firm.name;
   const sub = biz ? (accountant ? `Client of ${s.firm.name}` : `Phase ${biz.phase}, ${biz.branches.length} ${biz.branches.length === 1 ? 'branch' : 'branches'}`) : `${s.clients.length} clients`;
+  const owner = live ? s.businesses[0] : (s.businesses.find((b) => b.id === 'jaya') ?? s.businesses[0]);
   const choose = (fn: () => void) => {
     setOpen(false);
     fn();
@@ -109,20 +115,22 @@ function Switcher({ onNavigate }: { onNavigate?: () => void }) {
       </button>
       {open && (
         <div className="menu" id="workspace-menu" aria-label="Switch view">
-          <div className="menu-label">See the demo as</div>
+          <div className="menu-label">{live ? 'Work as' : 'See the demo as'}</div>
           <button type="button" className="menu-item" aria-current={!accountant} onClick={() => choose(() => switchPersona('owner'))}>
-            <Avatar initials="ML" tone={0} round />
+            <Avatar initials={owner.owner.initials} tone={0} round />
             <span style={{ flex: 1, minWidth: 0 }}>
-              <span className="strong" style={{ display: 'block' }}>Mei Ling, business owner</span>
-              <span className="small">Jaya Elektrik Sdn Bhd</span>
+              <span className="strong" style={{ display: 'block' }}>{live ? 'The taxpayer' : `${owner.owner.name}, business owner`}</span>
+              <span className="small">{owner.name || owner.short}</span>
             </span>
             {!accountant && ic(Check, 'ico-sm')}
           </button>
           <button type="button" className="menu-item" aria-current={accountant} onClick={() => choose(() => switchPersona('accountant'))}>
             <Avatar initials={s.firm.user.initials} tone="solid" round />
             <span style={{ flex: 1, minWidth: 0 }}>
-              <span className="strong" style={{ display: 'block' }}>{s.firm.user.name}, accountant</span>
-              <span className="small">{s.firm.name}, {s.clients.length} clients</span>
+              <span className="strong" style={{ display: 'block' }}>{live ? 'An intermediary' : `${s.firm.user.name}, accountant`}</span>
+              <span className="small">
+                {s.firm.name}, {s.clients.length} {s.clients.length === 1 ? 'client' : 'clients'}
+              </span>
             </span>
             {accountant && ic(Check, 'ico-sm')}
           </button>
@@ -153,6 +161,8 @@ function Switcher({ onNavigate }: { onNavigate?: () => void }) {
 
 function SideContent({ onNavigate }: { onNavigate?: () => void }) {
   const s = useApp();
+  const live = useLive();
+  const liveEnv = live?.env;
   const { route } = useRoute();
   const biz = activeBiz(s);
   const accountant = s.persona === 'accountant';
@@ -206,9 +216,17 @@ function SideContent({ onNavigate }: { onNavigate?: () => void }) {
           </span>
           <span style={{ minWidth: 0 }}>
             <span className="strong" style={{ display: 'block', fontSize: 13 }}>
-              MyInvois, simulated
+              {s.workspace === 'live' ? `MyInvois ${liveEnv === 'production' ? 'production' : 'sandbox'}` : 'MyInvois, simulated'}
             </span>
-            <span className="small">{accountant ? `Intermediary for ${s.clients.filter((c) => c.bizId).length} clients` : 'Sample data only'}</span>
+            <span className="small">
+              {accountant
+                ? `Intermediary for ${plural(s.clients.filter((c) => c.bizId).length, 'client')}`
+                : s.workspace === 'live'
+                  ? live?.configured
+                    ? 'Connected as the taxpayer'
+                    : 'Not set up on the server'
+                  : 'Sample data only'}
+            </span>
           </span>
         </button>
         {person && (
@@ -241,6 +259,7 @@ const TITLES: Partial<Record<Route['name'], string>> = {
   doc: 'E-invoice',
   compose: 'New e-invoice',
   requests: 'Buyer requests',
+  received: 'Received e-invoices',
   buyer: "Buyer's phone",
   monthend: 'Month-end',
   buyers: 'Buyers',
@@ -412,6 +431,7 @@ function ResetDialog({ open, onClose }: { open: boolean; onClose: () => void }) 
 
 export function Shell({ children }: { children: ReactNode }) {
   const s = useApp();
+  const live = useLive();
   const { route, key } = useRoute();
   const t = useNow(30_000);
   const [drawer, setDrawer] = useState(false);
@@ -452,25 +472,53 @@ export function Shell({ children }: { children: ReactNode }) {
           )}
         </header>
         <div className="banner-wrap">
-        <div className="banner" role="note">
-          <span className="banner-text">
-            {ic(FlaskConical, 'ico-sm')}
-            <span>
-              Demo with sample data. Nothing is sent to LHDN. <span className="banner-clock">Demo clock: {date(t)}, {time(t)}</span>
+        {s.workspace === 'live' ? (
+          <div className="banner" role="note">
+            <span className="banner-text">
+              {ic(PlugZap, 'ico-sm')}
+              <span>
+                {live?.env === 'production'
+                  ? 'Live on MyInvois production. What you submit is filed with LHDN.'
+                  : "MyInvois sandbox. What you submit goes to LHDN's test system, not for tax."}
+                {live === null && ' The MyInvois server is not reachable.'}
+              </span>
             </span>
-          </span>
-          <span className="banner-actions">
-            <button type="button" className="banner-btn" onClick={() => setGuideOpen(!s.guide.open)} aria-expanded={s.guide.open} aria-controls="guide" id="guide-toggle">
-              {ic(ListChecks, 'ico-sm')}
-              Things to try {done}/{STEPS.length}
-            </button>
-            <button type="button" className="banner-btn" onClick={() => setResetOpen(true)} id="reset-open">
-              {ic(RotateCcw, 'ico-sm')}
-              Reset
-            </button>
-          </span>
-        </div>
-        <Guide />
+            <span className="banner-actions">
+              <button type="button" className="banner-btn" onClick={() => openWorkspace('demo')} id="to-demo">
+                {ic(FlaskConical, 'ico-sm')}
+                Back to the demo
+              </button>
+            </span>
+          </div>
+        ) : (
+          <>
+            <div className="banner" role="note">
+              <span className="banner-text">
+                {ic(FlaskConical, 'ico-sm')}
+                <span>
+                  Demo with sample data. Nothing is sent to LHDN. <span className="banner-clock">Demo clock: {date(t)}, {time(t)}</span>
+                </span>
+              </span>
+              <span className="banner-actions">
+                {live?.configured && (
+                  <button type="button" className="banner-btn" onClick={() => openWorkspace('live')} id="to-live">
+                    {ic(PlugZap, 'ico-sm')}
+                    Use MyInvois {live.env}
+                  </button>
+                )}
+                <button type="button" className="banner-btn" onClick={() => setGuideOpen(!s.guide.open)} aria-expanded={s.guide.open} aria-controls="guide" id="guide-toggle">
+                  {ic(ListChecks, 'ico-sm')}
+                  Things to try {done}/{STEPS.length}
+                </button>
+                <button type="button" className="banner-btn" onClick={() => setResetOpen(true)} id="reset-open">
+                  {ic(RotateCcw, 'ico-sm')}
+                  Reset
+                </button>
+              </span>
+            </div>
+            <Guide />
+          </>
+        )}
         </div>
         <main className="page" id="main">
           {children}

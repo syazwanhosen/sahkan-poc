@@ -1,10 +1,14 @@
-import { CalendarCheck, CircleAlert, CircleCheck, Clock, FileSpreadsheet, FileText, Inbox, LoaderCircle, Plus, Upload } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Bell, CalendarCheck, CircleAlert, CircleCheck, Clock, FileSpreadsheet, FileText, Inbox, LoaderCircle, Plus, Undo2, Upload } from 'lucide-react';
 import { DAY, PERIOD, PERIOD_DUE } from '../lib/clock';
-import { daysLeft, int, longDay, periodMonth, plural, rmx } from '../lib/format';
+import { dateTime, dayMon, daysLeft, int, longDay, periodMonth, plural, rmx } from '../lib/format';
+import { errorText, type Notice } from '../lib/myinvois';
 import { useApp } from '../state/store';
+import { useLive } from '../state/live';
 import { navigate } from '../state/nav';
 import { attention, branchName, byNewest, docsOf, runsOf, splitOf, stats } from '../state/select';
-import { Button, Chip, Empty, PageHeader, Panel, Progress, ic, useNow } from '../ui';
+import { liveNotices, syncLive } from '../state/actions';
+import { Button, Chip, Empty, Note, PageHeader, Panel, Progress, ic, useNow } from '../ui';
 import { DocTable, shortReason, useBizOf } from './common';
 
 const compact = (n: number) => (Math.abs(n) >= 1e6 ? `RM ${(n / 1e6).toFixed(2)} million` : rmx(n));
@@ -13,6 +17,7 @@ export function TodayPage() {
   const s = useApp();
   const t = useNow(15_000);
   const biz = useBizOf(s);
+  useEffect(() => void syncLive(biz.id), [biz.id]);
   const a = attention(s, biz.id, t);
   const st = stats(s, biz.id, t);
   const runs = runsOf(s, biz.id);
@@ -24,6 +29,15 @@ export function TodayPage() {
   const branches = [...new Set(a.pending.map((r) => branchName(biz, r.branchId)))];
 
   const rows = [
+    a.rejected.length > 0 && {
+      key: 'rejected',
+      tone: 'tone-3',
+      icon: Undo2,
+      title: `${plural(a.rejected.length, 'buyer')} asked you to cancel an e-invoice`,
+      sub: `${a.rejected.map((d) => d.number).join(', ')}. It stays valid until you cancel it or issue a credit note.`,
+      action: 'Review',
+      go: () => navigate({ name: 'doc', id: a.rejected[0].id }),
+    },
     a.invalid.length > 0 && {
       key: 'invalid',
       tone: 'tone-3',
@@ -115,7 +129,7 @@ export function TodayPage() {
           actions={filed === runs.length && runs.length ? <Chip tone="ok">Filed</Chip> : <Chip tone={due < 2 * DAY ? 'bad' : 'due'}>{daysLeft(due)}</Chip>}
         >
           <div className="pad stack" style={{ paddingTop: 0 }}>
-            <div className="hint">Consolidated e-invoice for walk-in sales, due 7 Nov.</div>
+            <div className="hint">Consolidated e-invoice for walk-in sales, due {dayMon(PERIOD_DUE)}.</div>
             <div className="stack-sm">
               <div className="row" style={{ justifyContent: 'space-between' }}>
                 <span className="small strong" style={{ color: 'var(--ink-2)' }}>
@@ -185,7 +199,55 @@ export function TodayPage() {
       >
         <DocTable docs={recent} t={t} biz={biz} label="Recent e-invoices" showBranch={biz.branches.length > 1} />
       </Panel>
+
+      {s.workspace === 'live' && <Notices bizId={biz.id} />}
     </>
+  );
+}
+
+/** The taxpayer's MyInvois notifications from the last week (Get Notifications). */
+function Notices({ bizId }: { bizId: string }) {
+  const live = useLive();
+  const [list, setList] = useState<Notice[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!live?.configured) return;
+    let on = true;
+    liveNotices(bizId)
+      .then((x) => on && setList(x))
+      .catch((e) => on && setError(errorText(e)));
+    return () => {
+      on = false;
+    };
+  }, [bizId, live?.configured]);
+  if (!live?.configured) return null;
+  return (
+    <Panel title="From MyInvois" sub="Notifications LHDN sent this taxpayer in the last 7 days.">
+      {error ? (
+        <div className="pad" style={{ paddingTop: 0 }}>
+          <Note tone="bad">{error}</Note>
+        </div>
+      ) : !list ? (
+        <div className="pad hint" style={{ paddingTop: 0 }}>
+          Asking MyInvois…
+        </div>
+      ) : list.length ? (
+        <ul className="related">
+          {list.slice(0, 8).map((n) => (
+            <li key={n.notificationId}>
+              {ic(Bell, 'ico-sm')}
+              <span className="grow">
+                <span className="strong" style={{ display: 'block' }}>{n.notificationSubject || n.typeName}</span>
+                {n.finalMessage && <span className="small">{n.finalMessage}</span>}
+              </span>
+              <span className="small nw">{n.receivedDateTime || n.creationDateTime ? dateTime(Date.parse((n.receivedDateTime || n.creationDateTime)!)) : ''}</span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <Empty icon={Bell} title="No notifications this week" />
+      )}
+    </Panel>
   );
 }
 

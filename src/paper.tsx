@@ -1,7 +1,7 @@
 // The e-invoice as the buyer sees it, plus the QR code and the validation seal.
 import { useId, useMemo } from 'react';
 import type { Business, Doc } from './types';
-import { qrPath, qrText } from './lib/qr';
+import { docQrText, qrPath } from './lib/qr';
 import { DOC_LABEL, lineAmount, stateName, taxOf, totals } from './lib/rules';
 import { dateTime, rm, rmx } from './lib/format';
 import { branchName } from './state/select';
@@ -24,11 +24,17 @@ export function QR({ text, size = 112, label }: { text: string; size?: number; l
   );
 }
 
-/** A round "validated" seal. In the demo it says so plainly: simulated. */
-export function Seal({ stamp, size = 104 }: { stamp?: boolean; size?: number }) {
+const SEAL: Record<'demo' | 'sandbox' | 'production', { text: string; label: string }> = {
+  demo: { text: 'VALIDATED · SIMULATED DEMO ·', label: 'Validated, simulated in this demo' },
+  sandbox: { text: 'VALIDATED · MYINVOIS SANDBOX ·', label: 'Validated on the MyInvois sandbox' },
+  production: { text: 'VALIDATED · LHDN MYINVOIS ·', label: 'Validated by LHDN' },
+};
+
+/** A round "validated" seal. It says plainly where the validation came from: the demo, the sandbox or LHDN. */
+export function Seal({ stamp, size = 104, via = 'demo' }: { stamp?: boolean; size?: number; via?: keyof typeof SEAL }) {
   const id = useId().replace(/:/g, '');
   return (
-    <svg className={cx('seal', stamp && 'seal-stamp')} width={size} height={size} viewBox="0 0 120 120" role="img" aria-label="Validated, simulated in this demo">
+    <svg className={cx('seal', stamp && 'seal-stamp')} width={size} height={size} viewBox="0 0 120 120" role="img" aria-label={SEAL[via].label}>
       <defs>
         <path id={`arc${id}`} d="M60,60 m-45,0 a45,45 0 1,1 90,0 a45,45 0 1,1 -90,0" />
       </defs>
@@ -36,7 +42,7 @@ export function Seal({ stamp, size = 104 }: { stamp?: boolean; size?: number }) 
       <circle cx="60" cy="60" r="33" strokeWidth="1.5" style={{ fill: 'var(--paper-seal-tint)', stroke: 'var(--paper-seal)' }} />
       <text fontSize="10" fontWeight="700" letterSpacing="1.6" style={{ fill: 'var(--paper-seal)', fontFamily: 'var(--font)' }}>
         <textPath href={`#arc${id}`} textLength="276" lengthAdjust="spacing">
-          VALIDATED · SIMULATED DEMO ·
+          {SEAL[via].text}
         </textPath>
       </text>
       <path d="M45 61 l10 10 l20 -22" fill="none" strokeWidth="5.5" strokeLinecap="round" strokeLinejoin="round" style={{ stroke: 'var(--paper-seal)' }} />
@@ -157,16 +163,30 @@ export function InvoicePaper({ doc, biz, refDoc, stamp }: { doc: Doc; biz: Busin
       <div className="paper-foot">
         {doc.status === 'valid' || doc.status === 'cancelled' ? (
           <>
-            <QR text={qrText(doc.number, doc.uuid)} size={104} label="Sample QR code. It holds demo text, not a MyInvois link." />
+            <QR
+              text={docQrText(doc)}
+              size={104}
+              label={doc.live ? 'QR code. It opens this e-invoice on the MyInvois portal.' : 'Sample QR code. It holds demo text, not a MyInvois link.'}
+            />
             <div style={{ flex: '1 1 220px', minWidth: 0 }}>
-              <div className="strong">{doc.status === 'cancelled' ? 'Cancelled after validation' : 'Validated (simulated in this demo)'}</div>
+              <div className="strong">
+                {doc.status === 'cancelled'
+                  ? 'Cancelled after validation'
+                  : doc.live
+                    ? `Validated by LHDN${doc.live.env === 'sandbox' ? ' (MyInvois sandbox)' : ''}`
+                    : 'Validated (simulated in this demo)'}
+              </div>
               <div className="pm small mono" style={{ marginTop: 4 }}>UUID {doc.uuid}</div>
               {doc.validatedAt && <div className="pm small">Validated {dateTime(doc.validatedAt)}</div>}
               <div className="pm small" style={{ marginTop: 6 }}>
-                Sample document. On a real e-invoice this QR code opens the MyInvois validation page.
+                {!doc.live
+                  ? 'Sample document. On a real e-invoice this QR code opens the MyInvois validation page.'
+                  : doc.live.env === 'sandbox'
+                    ? "Sandbox document from LHDN's test system, not for tax. The QR code opens it on the MyInvois sandbox portal."
+                    : 'Scan the QR code to check this e-invoice on MyInvois.'}
               </div>
             </div>
-            {doc.status === 'valid' && <Seal stamp={stamp} />}
+            {doc.status === 'valid' && <Seal stamp={stamp} via={doc.live?.env ?? 'demo'} />}
           </>
         ) : (
           <div className="pm small">

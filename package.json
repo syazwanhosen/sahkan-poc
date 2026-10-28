@@ -2,12 +2,12 @@
   "name": "sahkan-poc",
   "private": true,
   "version": "0.1.0",
-  "description": "Sahkan e-invoicing web app: proof-of-concept demo UI with sample data and a simulated MyInvois connection.",
+  "description": "Sahkan e-invoicing web app: demo UI with sample data and a simulated MyInvois, plus a live mode on the real MyInvois API through a small server.",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "typecheck": "tsc --noEmit",
-    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p server",
+    "build": "npm run typecheck && vite build",
     "preview": "vite preview",
     "artifact": "npm run build && node scripts/to-artifact.mjs"
   },

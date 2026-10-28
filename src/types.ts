@@ -30,7 +30,12 @@ export interface Business {
   short: string;
   initials: string;
   tin: string;
+  /** The ID that goes with the TIN: the BRN for a company or sole proprietor, else MyKad (or passport, army number) for an individual. */
   brn: string;
+  /** What brn holds. Unset means BRN. */
+  idType?: IdType;
+  /** SST registration number, or empty when not registered ("NA" on the e-invoice). */
+  sst?: string;
   msic: string;
   msicName: string;
   activity: string;
@@ -94,6 +99,17 @@ export interface DocEvent {
   label: string;
 }
 
+/** How a document was sent to the real MyInvois. Follow-up calls use the same login. */
+export interface LiveRef {
+  env: 'sandbox' | 'production';
+  version: '1.0' | '1.1';
+  /** The client's TIN when an intermediary sent it. */
+  onBehalfOf?: string;
+  /** The buyer asked LHDN to reject it; it stays valid until the supplier cancels. */
+  rejectRequestedAt?: number;
+  rejectReason?: string;
+}
+
 export interface Doc {
   id: string;
   bizId: string;
@@ -122,7 +138,35 @@ export interface Doc {
   receiptNo?: string;
   requestId?: string;
   wasInvalid?: boolean;
+  /** Set when the document went to the real MyInvois rather than the simulated one. */
+  live?: LiveRef;
   events: DocEvent[];
+}
+
+/**
+ * An e-invoice a supplier issued to one of our businesses. The buyer can reject it within 72 hours
+ * of validation; it stays valid until the supplier cancels it.
+ */
+export interface ReceivedDoc {
+  id: string;
+  bizId: string;
+  uuid: string;
+  longId?: string;
+  /** "Invoice", "Credit Note"… as MyInvois names the type. */
+  typeName: string;
+  number: string;
+  supplierName: string;
+  supplierTin: string;
+  issuedAt: number;
+  validatedAt?: number;
+  total: number;
+  status: 'valid' | 'cancelled';
+  rejectRequestedAt?: number;
+  rejectReason?: string;
+  cancelledAt?: number;
+  lines?: { desc: string; qty: number; amount: number }[];
+  /** Set when it came from the real MyInvois; follow-up calls use the same login. */
+  live?: { env: LiveRef['env']; onBehalfOf?: string };
 }
 
 export interface RequestItem {
@@ -195,8 +239,12 @@ export interface Settings {
 
 export type GuideKey = 'fix' | 'big' | 'request' | 'monthend' | 'accountant';
 
+/** demo: sample data, simulated MyInvois, demo clock. live: your own data, real MyInvois, real clock. */
+export type Workspace = 'demo' | 'live';
+
 export interface State {
   v: number;
+  workspace: Workspace;
   realStart: number;
   persona: 'owner' | 'accountant';
   activeBizId: string | null;
@@ -206,6 +254,7 @@ export interface State {
   buyers: Buyer[];
   items: Item[];
   docs: Doc[];
+  received: ReceivedDoc[];
   requests: BuyerRequest[];
   runs: MonthEndRun[];
   counters: Record<string, Record<DocType, number>>;

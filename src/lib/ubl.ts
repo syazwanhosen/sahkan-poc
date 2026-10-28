@@ -9,13 +9,23 @@ type Json = Record<string, unknown>;
 const v = (value: string | number, attrs?: Record<string, string>) => [{ _: value, ...(attrs ?? {}) }];
 const money = (n: number) => [{ _: n, currencyID: 'MYR' }];
 
-function partyNode(p: Party, msic?: { code: string; name: string }): Json {
+// Tax type E needs a reason; the composer doesn't ask for one, so every exempt line carries this.
+const EXEMPTION_REASON = 'Exempt from tax';
+
+const taxCategory = (code: string): Json => ({
+  ID: v(code),
+  ...(code === 'E' ? { TaxExemptionReason: v(EXEMPTION_REASON) } : {}),
+  TaxScheme: [{ ID: v('OTH', { schemeID: 'UN/ECE 5153', schemeAgencyID: '6' }) }],
+});
+
+function partyNode(p: Party, o: { msic?: { code: string; name: string }; sst?: string } = {}): Json {
   return {
-    ...(msic ? { IndustryClassificationCode: v(msic.code, { name: msic.name }) } : {}),
+    ...(o.msic ? { IndustryClassificationCode: v(o.msic.code, { name: o.msic.name }) } : {}),
     PartyIdentification: [
       { ID: v(p.tin, { schemeID: 'TIN' }) },
       { ID: v(p.idValue || 'NA', { schemeID: p.idType }) },
-      { ID: v('NA', { schemeID: 'SST' }) },
+      { ID: v(o.sst?.trim() || 'NA', { schemeID: 'SST' }) },
+      { ID: v('NA', { schemeID: 'TTX' }) },
     ],
     PostalAddress: [
       {
@@ -45,18 +55,22 @@ function taxSubtotals(lines: Line[]): Json[] {
     TaxableAmount: money(Math.round(x.taxable * 100) / 100),
     TaxAmount: money(Math.round(x.tax * 100) / 100),
     Percent: v(x.rate),
-    TaxCategory: [{ ID: v(code), TaxScheme: [{ ID: v('OTH', { schemeID: 'UN/ECE 5153', schemeAgencyID: '6' }) }] }],
+    TaxCategory: [taxCategory(code)],
   }));
 }
 
-export function buildUbl(doc: Doc, biz: Business, ref?: Doc): Json {
+/**
+ * The UBL document for one e-invoice. The version only labels it here: the server sets the
+ * one it submits (1.1 when it holds a signing certificate, else 1.0) and signs 1.1 documents.
+ */
+export function buildUbl(doc: Doc, biz: Business, ref?: Doc, version: '1.0' | '1.1' = '1.1'): Json {
   const t = totals(doc.lines);
   const iso = new Date(doc.issuedAt).toISOString();
   const supplier: Party = {
     kind: 'company',
     name: biz.name,
     tin: biz.tin,
-    idType: 'BRN',
+    idType: biz.idType ?? 'BRN',
     idValue: biz.brn,
     email: biz.email,
     phone: biz.phone,
@@ -66,15 +80,21 @@ export function buildUbl(doc: Doc, biz: Business, ref?: Doc): Json {
     ID: v(doc.number),
     IssueDate: v(iso.slice(0, 10)),
     IssueTime: v(iso.slice(11, 19) + 'Z'),
-    InvoiceTypeCode: v(doc.type, { listVersionID: '1.1' }),
+    InvoiceTypeCode: v(doc.type, { listVersionID: version }),
     DocumentCurrencyCode: v('MYR'),
     TaxCurrencyCode: v('MYR'),
   };
   if (ref) {
     invoice.BillingReference = [{ InvoiceDocumentReference: [{ ID: v(ref.number), UUID: v(ref.uuid ?? 'NA') }] }];
   }
-  invoice.AccountingSupplierParty = [{ Party: [partyNode(supplier, { code: biz.msic, name: biz.msicName })] }];
-  invoice.AccountingCustomerParty = [{ Party: [partyNode(doc.buyer)] }];
+  // State 17 ("not applicable") is only for consolidated e-invoices and foreign addresses, so a
+  // general-public buyer on a single sale takes the supplier's state.
+  const buyer =
+    doc.buyer.kind === 'general' && !doc.consolidated && doc.buyer.address.state === '17'
+      ? { ...doc.buyer, address: { ...doc.buyer.address, state: biz.address.state } }
+      : doc.buyer;
+  invoice.AccountingSupplierParty = [{ Party: [partyNode(supplier, { msic: { code: biz.msic, name: biz.msicName }, sst: biz.sst })] }];
+  invoice.AccountingCustomerParty = [{ Party: [partyNode(buyer)] }];
   invoice.TaxTotal = [{ TaxAmount: money(t.tax), TaxSubtotal: taxSubtotals(doc.lines) }];
   invoice.LegalMonetaryTotal = [
     {
@@ -99,7 +119,7 @@ export function buildUbl(doc: Doc, biz: Business, ref?: Doc): Json {
               TaxableAmount: money(amt),
               TaxAmount: money(Math.round(amt * tx.rate) / 100),
               Percent: v(tx.rate),
-              TaxCategory: [{ ID: v(tx.code), TaxScheme: [{ ID: v('OTH', { schemeID: 'UN/ECE 5153', schemeAgencyID: '6' }) }] }],
+              TaxCategory: [taxCategory(tx.code)],
             },
           ],
         },
@@ -122,6 +142,27 @@ export function buildUbl(doc: Doc, biz: Business, ref?: Doc): Json {
   };
 }
 
+/** The supplier and lines of a UBL JSON document as Get Document returns it. XML documents give no lines. */
+export function readUbl(text: string): { supplier?: string; lines: { desc: string; qty: number; amount: number }[] } {
+  const first = (x: unknown): unknown => (x as { _?: unknown }[] | undefined)?.[0]?._;
+  try {
+    const inv = (JSON.parse(text) as { Invoice?: Json[] }).Invoice?.[0] as Record<string, Json[]> | undefined;
+    if (!inv) return { lines: [] };
+    const party = (inv.AccountingSupplierParty?.[0]?.Party as Json[] | undefined)?.[0] as Record<string, Json[]> | undefined;
+    const lines = (inv.InvoiceLine ?? []).map((l) => {
+      const item = (l.Item as Json[] | undefined)?.[0];
+      return {
+        desc: String(first(item?.Description) ?? ''),
+        qty: Number(first(l.InvoicedQuantity) ?? 1),
+        amount: Number(first(l.LineExtensionAmount) ?? 0),
+      };
+    });
+    return { supplier: party ? String(first(party.PartyLegalEntity?.[0]?.RegistrationName) ?? '') || undefined : undefined, lines };
+  } catch {
+    return { lines: [] };
+  }
+}
+
 export function toBase64(text: string): string {
   const bytes = new TextEncoder().encode(text);
   let bin = '';
@@ -138,8 +179,8 @@ export async function sha256Hex(text: string): Promise<string> {
   }
 }
 
-export async function submissionPreview(doc: Doc, biz: Business, ref?: Doc) {
-  const ubl = buildUbl(doc, biz, ref);
+export async function submissionPreview(doc: Doc, biz: Business, ref?: Doc, version?: '1.0' | '1.1') {
+  const ubl = buildUbl(doc, biz, ref, version);
   const minified = JSON.stringify(ubl);
   const hash = await sha256Hex(minified);
   const b64 = toBase64(minified);

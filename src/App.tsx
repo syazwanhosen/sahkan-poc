@@ -8,6 +8,7 @@ import { InvoicesPage } from './pages/invoices';
 import { ComposePage } from './pages/composer';
 import { DocPage } from './pages/detail';
 import { BuyerPage, RequestsPage } from './pages/requests';
+import { ReceivedPage } from './pages/received';
 import { MonthEndPage } from './pages/monthend';
 import { ClientsPage } from './pages/clients';
 import { BuyersPage, ItemsPage } from './pages/directory';
@@ -34,6 +35,9 @@ export function App() {
         break;
       case 'requests':
         page = <RequestsPage />;
+        break;
+      case 'received':
+        page = <ReceivedPage id={route.id} />;
         break;
       case 'buyer':
         page = <BuyerPage />;

@@ -1,0 +1,10 @@
+# MyInvois credentials and signing keys never go into git.
+.env
+.env.*
+!.env.example
+*.pem
+*.p12
+*.pfx
+*.key
+
+dist/

@@ -1,4 +1,6 @@
 import QRCode from 'qrcode';
+import type { Doc } from '../types';
+import { validationUrl } from './myinvois';
 
 interface Matrix {
   size: number;
@@ -39,3 +41,7 @@ export function qrPath(text: string): { size: number; d: string } {
 
 export const qrText = (number: string, uuid?: string) =>
   `SAHKAN DEMO e-invoice ${number}${uuid ? ` UUID ${uuid}` : ''}. Sample data, not issued through LHDN.`;
+
+/** A real e-invoice's QR code opens its MyInvois validation page; a demo one holds a plain note. */
+export const docQrText = (d: Pick<Doc, 'number' | 'uuid' | 'longId' | 'live'>) =>
+  d.live && d.uuid && d.longId ? validationUrl(d.live.env, d.uuid, d.longId) : qrText(d.number, d.uuid);

@@ -6,8 +6,9 @@ import { STATES, checkEmail, checkMykad, checkPhone, checkPostcode, checkTin, cl
 import { ago, dateTime, initials, rm, rmx, time } from '../lib/format';
 import { useApp } from '../state/store';
 import { navigate } from '../state/nav';
-import { branchName } from '../state/select';
-import { createRequest, declineRequest, issueRequest, setSettings, verifyTin } from '../state/actions';
+import { bizById, branchName } from '../state/select';
+import { createRequest, declineRequest, issueRequest, partyFromTaxpayer, setSettings, verifyTin } from '../state/actions';
+import { QrFill } from '../party';
 import { toast } from '../state/toast';
 import { Avatar, Button, Chip, Empty, Field, Input, Modal, Note, PageHeader, Panel, Segmented, Select, StatusChip, Switch, Textarea, cx, ic, useNow } from '../ui';
 import { useBizOf } from './common';
@@ -380,6 +381,11 @@ const blankBuyer = (): Party => ({
 function BuyerScreen({ lang, setLang }: { lang: Lang; setLang: (l: Lang) => void }) {
   const s = useApp();
   const x = TX[lang];
+  // The demo's buyer page is always Jaya Elektrik's Bangsar shop; the live one is your business.
+  const live = s.workspace === 'live';
+  const active = useBizOf(s);
+  const shop = live ? active : (bizById(s, 'jaya') ?? active);
+  const branch = live ? shop.branches[0] : (shop.branches.find((b) => b.id === 'BGS') ?? shop.branches[0]);
   const [k, setK] = useState(0);
   const sample = SAMPLE_RECEIPTS[k % SAMPLE_RECEIPTS.length];
   const receiptAt = useMemo(() => now() - 9 * MIN, [k]);
@@ -402,14 +408,15 @@ function BuyerScreen({ lang, setLang }: { lang: Lang; setLang: (l: Lang) => void
   const bad = Object.values(errs).some(Boolean);
   const e = (f: string) => (tried ? errs[f] : undefined);
 
-  const checkTinLive = async (tin: string) => {
-    if (!checkTin(tin).ok) {
+  // LHDN checks a TIN together with its MyKad number, so the live workspace waits for both.
+  const checkTinLive = async (tin: string, idValue = p.idValue) => {
+    if (!checkTin(tin).ok || (live && !checkMykad(idValue).ok)) {
       setTinState('idle');
       return;
     }
     setTinState('checking');
-    const r = await verifyTin(tin);
-    setTinState(r === 'verified' ? 'ok' : 'bad');
+    const r = await verifyTin({ tin, idType: 'NRIC', idValue });
+    setTinState(r === 'verified' ? 'ok' : r === 'not-found' ? 'bad' : 'idle');
   };
 
   const scan = async () => {
@@ -424,7 +431,7 @@ function BuyerScreen({ lang, setLang }: { lang: Lang; setLang: (l: Lang) => void
   const send = () => {
     setTried(true);
     if (bad) return;
-    const id = createRequest({ bizId: 'jaya', branchId: 'BGS', receiptNo: sample.no, receiptAt, items: sample.items, buyer: { ...p, tin: p.tin.toUpperCase() } });
+    const id = createRequest({ bizId: shop.id, branchId: branch.id, receiptNo: sample.no, receiptAt, items: sample.items, buyer: { ...p, tin: p.tin.toUpperCase() } });
     setReqId(id);
   };
 
@@ -434,10 +441,10 @@ function BuyerScreen({ lang, setLang }: { lang: Lang; setLang: (l: Lang) => void
 
   const header = (
     <div className="bp-head">
-      <Avatar initials="JE" tone="solid" />
+      <Avatar initials={shop.initials} tone="solid" />
       <div className="grow">
-        <div className="strong">Jaya Elektrik</div>
-        <div className="small">Bangsar branch</div>
+        <div className="strong">{shop.short}</div>
+        <div className="small">{branch.name} branch</div>
       </div>
       <Segmented
         id="buyer-lang"
@@ -458,7 +465,8 @@ function BuyerScreen({ lang, setLang }: { lang: Lang; setLang: (l: Lang) => void
       { label: x.s1, done: true, at: req.requestedAt },
       { label: req.status === 'declined' ? x.declined : x.s2, done: req.status === 'issued', now: req.status === 'pending', bad: req.status === 'declined' },
       { label: x.s3, done: doc?.status === 'valid', now: doc?.status === 'submitted', bad: doc?.status === 'invalid' },
-      { label: x.s4, done: !!doc?.emailedAt, now: doc?.status === 'valid' && !doc.emailedAt },
+      // On the real MyInvois, LHDN emails the buyer itself once the e-invoice is valid.
+      { label: x.s4, done: !!doc?.emailedAt || (!!doc?.live && doc.status === 'valid'), now: doc?.status === 'valid' && !doc.emailedAt && !doc.live },
     ];
     return (
       <div className="bp">
@@ -542,9 +550,20 @@ function BuyerScreen({ lang, setLang }: { lang: Lang; setLang: (l: Lang) => void
         <h3 className="h2">{x.title}</h3>
         <p className="hint" style={{ marginTop: 4 }}>{x.lead}</p>
       </div>
-      <Button block size="lg" variant="primary" icon={ic(ScanLine)} busy={scanning} onClick={scan} id="buyer-scan">
-        {x.scan}
-      </Button>
+      {live ? (
+        <QrFill
+          id="bp-qr"
+          label={x.scan}
+          onInfo={(info) => {
+            setP(partyFromTaxpayer(info));
+            setTinState('ok');
+          }}
+        />
+      ) : (
+        <Button block size="lg" variant="primary" icon={ic(ScanLine)} busy={scanning} onClick={scan} id="buyer-scan">
+          {x.scan}
+        </Button>
+      )}
       <div className="or">{x.or}</div>
       <Field label={x.name} htmlFor="bp-name" error={e('name')}>
         <Input id="bp-name" value={p.name} invalid={!!e('name')} autoComplete="name" onChange={(ev) => setP({ ...p, name: ev.target.value })} />
@@ -570,7 +589,18 @@ function BuyerScreen({ lang, setLang }: { lang: Lang; setLang: (l: Lang) => void
         />
       </Field>
       <Field label={x.mykad} htmlFor="bp-mykad" error={e('idValue')}>
-        <Input id="bp-mykad" value={p.idValue} invalid={!!e('idValue')} inputMode="numeric" autoComplete="off" onChange={(ev) => setP({ ...p, idValue: ev.target.value })} />
+        <Input
+          id="bp-mykad"
+          value={p.idValue}
+          invalid={!!e('idValue')}
+          inputMode="numeric"
+          autoComplete="off"
+          onChange={(ev) => {
+            setP({ ...p, idValue: ev.target.value });
+            if (live) setTinState('idle');
+          }}
+          onBlur={() => live && checkTinLive(p.tin, p.idValue)}
+        />
       </Field>
       <Field label={x.email} htmlFor="bp-email" error={e('email')}>
         <Input id="bp-email" type="email" value={p.email} invalid={!!e('email')} autoComplete="email" onChange={(ev) => setP({ ...p, email: ev.target.value })} />
@@ -615,12 +645,14 @@ function BuyerScreen({ lang, setLang }: { lang: Lang; setLang: (l: Lang) => void
 export function BuyerPage() {
   const s = useApp();
   const [lang, setLang] = useState<Lang>('en');
-  const pending = s.requests.filter((r) => r.bizId === 'jaya' && r.status === 'pending').length;
+  const active = useBizOf(s);
+  const shop = s.workspace === 'live' ? active : (bizById(s, 'jaya') ?? active);
+  const pending = s.requests.filter((r) => r.bizId === shop.id && r.status === 'pending').length;
   return (
     <>
       <PageHeader
         title="The buyer's side"
-        sub="What a buyer sees after scanning the QR code on a Jaya Elektrik receipt. Try it here, then approve it as the shop."
+        sub={`What a buyer sees after scanning the QR code on a ${shop.short} receipt. Try it here, then approve it as the shop.`}
       />
       <div className="cols buyer-cols">
         <div className="col-side stack" style={{ flexBasis: 300 }}>

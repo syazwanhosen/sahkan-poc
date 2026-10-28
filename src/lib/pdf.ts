@@ -1,10 +1,16 @@
-// A4 PDF of an e-invoice, drawn with jsPDF's built-in Helvetica. Every page is
-// marked as a sample so the file can't be mistaken for a real validated e-invoice.
+// A4 PDF of an e-invoice, drawn with jsPDF's built-in Helvetica. Demo and sandbox pages are
+// marked as such, so the file can't be mistaken for an e-invoice LHDN validated for tax.
 import { jsPDF } from 'jspdf';
 import type { Business, Doc } from '../types';
 import { DOC_LABEL, lineAmount, stateName, taxOf, totals } from './rules';
 import { dateTime } from './format';
-import { qrMatrix, qrText } from './qr';
+import { docQrText, qrMatrix } from './qr';
+
+const MARK = {
+  demo: { watermark: 'SAMPLE', footer: 'Sample document from the Sahkan proof-of-concept demo. It was not submitted to or validated by LHDN.' },
+  sandbox: { watermark: 'SANDBOX', footer: "Validated on the MyInvois sandbox, LHDN's test system. Not an e-invoice for tax purposes." },
+  production: { watermark: '', footer: '' },
+};
 
 type RGB = [number, number, number];
 const INK: RGB = [29, 41, 36];
@@ -22,21 +28,20 @@ export function docPdf(doc: Doc, biz: Business, ref?: Doc): Blob {
   const M = 18;
   const R = W - M;
 
+  const mark = MARK[doc.live?.env ?? 'demo'];
   const watermark = () => {
+    if (!mark.watermark) return;
     pdf.setFont('helvetica', 'bold');
-    pdf.setFontSize(96);
+    pdf.setFontSize(mark.watermark.length > 6 ? 80 : 96);
     pdf.setTextColor(239, 241, 237);
-    pdf.text('SAMPLE', 36, 222, { angle: 35 });
+    pdf.text(mark.watermark, 36, 222, { angle: 35 });
   };
   const footer = () => {
+    if (!mark.footer) return;
     pdf.setFont('helvetica', 'normal');
     pdf.setFontSize(7.5);
     pdf.setTextColor(...MUTED);
-    pdf.text(
-      'Sample document from the Sahkan proof-of-concept demo. It was not submitted to or validated by LHDN.',
-      M,
-      288,
-    );
+    pdf.text(mark.footer, M, 288);
   };
   const ink = (c: RGB) => pdf.setTextColor(...c);
 
@@ -171,7 +176,7 @@ export function docPdf(doc: Doc, biz: Business, ref?: Doc): Blob {
   pdf.setLineDashPattern([], 0);
   y += 7;
   if (doc.status === 'valid' && doc.uuid) {
-    const m = qrMatrix(qrText(doc.number, doc.uuid));
+    const m = qrMatrix(docQrText(doc));
     const size = 28;
     const cell = size / m.size;
     pdf.setFillColor(...INK);
@@ -183,13 +188,14 @@ export function docPdf(doc: Doc, biz: Business, ref?: Doc): Blob {
     pdf.setFont('helvetica', 'bold');
     pdf.setFontSize(10);
     ink(GREEN);
-    pdf.text('Validated (simulated in this demo)', M + size + 7, y + 5);
+    const env = doc.live?.env;
+    pdf.text(env ? `Validated by LHDN${env === 'sandbox' ? ' (MyInvois sandbox)' : ''}` : 'Validated (simulated in this demo)', M + size + 7, y + 5);
     pdf.setFont('helvetica', 'normal');
     pdf.setFontSize(8.5);
     ink(MUTED);
     pdf.text(`UUID ${doc.uuid}`, M + size + 7, y + 11);
     pdf.text(`Validated ${dateTime(doc.validatedAt ?? doc.issuedAt)}`, M + size + 7, y + 16);
-    pdf.text('Sample QR code. In the live app it links to the e-invoice on MyInvois.', M + size + 7, y + 21);
+    pdf.text(env ? 'Scan the QR code to check this e-invoice on MyInvois.' : 'Sample QR code. In the live app it links to the e-invoice on MyInvois.', M + size + 7, y + 21);
   } else {
     const status =
       doc.status === 'cancelled'

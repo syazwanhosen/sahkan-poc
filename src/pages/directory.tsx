@@ -80,8 +80,9 @@ export function BuyersPage() {
 
   const check = async (b: Buyer) => {
     setBusy(b.id);
-    const r = await verifyTin(b.tin);
+    const r = await verifyTin(b);
     setBusy(null);
+    if (r === 'unchecked') return; // not checked (the reason was already shown)
     updateBuyer(b.id, { tinStatus: r, checkedAt: now() });
     toast(r === 'verified' ? `${b.name}: TIN matched with LHDN` : `${b.name}: LHDN couldn't match ${b.tin}`, { tone: r === 'verified' ? 'ok' : 'bad' });
   };

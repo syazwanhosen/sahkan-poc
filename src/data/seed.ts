@@ -18,16 +18,18 @@ import type {
   MonthEndRun,
   Party,
   Person,
+  ReceivedDoc,
   State,
   TinStatus,
 } from '../types';
 import { DAY, DEMO_START as T, HOUR, MIN, PERIOD, myt } from '../lib/clock';
-import { GENERAL_PUBLIC_TIN } from '../lib/rules';
+import { GENERAL_PUBLIC_CLASS, GENERAL_PUBLIC_TIN } from '../lib/rules';
+import { initials } from '../lib/format';
 import { lhdnId, pick, rng } from '../lib/ids';
 import { computeSplit } from '../lib/split';
 import { makeReceipts, receiptAtNo, registerSpec, type ReceiptSpec } from './receipts';
 
-export const STATE_VERSION = 7;
+export const STATE_VERSION = 9;
 
 export const GENERAL_PUBLIC: Party = {
   kind: 'general',
@@ -907,7 +909,7 @@ function seedClient(c: Ctx, s: ClientSpec): Business {
         number: `INV-${pad4(no++)}`,
         branchId: 'MAIN',
         buyer: GENERAL_PUBLIC,
-        lines: [{ id: sid('ln'), desc: `Sale above RM10,000, receipt ${r.no}`, cls: items[0].cls, qty: 1, price: r.cents / 100, tax: '06' }],
+        lines: [{ id: sid('ln'), desc: `Sale above RM10,000, receipt ${r.no}`, cls: GENERAL_PUBLIC_CLASS, qty: 1, price: r.cents / 100, tax: '06' }],
         at: s.filedAt + 20_000,
         source: 'month-end',
         receiptNo: r.no,
@@ -925,6 +927,96 @@ function seedClient(c: Ctx, s: ClientSpec): Business {
   return biz;
 }
 
+// ---------------------------------------------------------------------------
+// E-invoices Jaya Elektrik received from its suppliers: one it can still reject, one it already
+// asked to be cancelled, one the supplier cancelled, and some past the 72-hour window.
+
+function seedReceived(rand: () => number): ReceivedDoc[] {
+  const R = (p: Omit<ReceivedDoc, 'id' | 'bizId' | 'uuid' | 'longId'>): ReceivedDoc => ({
+    id: sid('rcv'),
+    bizId: 'jaya',
+    uuid: lhdnId(26, rand),
+    longId: lhdnId(40, rand),
+    ...p,
+  });
+  return [
+    R({
+      typeName: 'Invoice',
+      number: 'INV-TB-20871',
+      supplierName: 'Teknologi Borong Sdn Bhd',
+      supplierTin: 'C24518830060',
+      issuedAt: T - 22 * HOUR,
+      validatedAt: T - 22 * HOUR + 3 * MIN,
+      total: 28740,
+      status: 'valid',
+      lines: [
+        { desc: 'Laptop, 14-inch, 16 GB (stock)', qty: 10, amount: 24500 },
+        { desc: 'Smartphone, 6.7-inch, 256 GB (stock)', qty: 2, amount: 3640 },
+        { desc: 'Delivery to Bangsar', qty: 1, amount: 600 },
+      ],
+    }),
+    R({
+      typeName: 'Invoice',
+      number: 'TLB-2611-0043',
+      supplierName: 'Talian Laju Berhad',
+      supplierTin: 'C11904327050',
+      issuedAt: T - 30 * HOUR,
+      validatedAt: T - 30 * HOUR + MIN,
+      total: 322.92,
+      status: 'valid',
+      lines: [{ desc: 'Business fibre 500 Mbps, November (service tax 8%)', qty: 1, amount: 322.92 }],
+    }),
+    R({
+      typeName: 'Invoice',
+      number: 'HB/2026/1011',
+      supplierName: 'Hartanah Bangsar Sdn Bhd',
+      supplierTin: 'C30071245080',
+      issuedAt: T - 2 * DAY,
+      validatedAt: T - 2 * DAY + 2 * MIN,
+      total: 9720,
+      status: 'valid',
+      rejectRequestedAt: T - DAY,
+      rejectReason: 'Wrong amount. The rent is RM 8,500 a month.',
+      lines: [{ desc: 'Shop rent, Bangsar, November 2026 (service tax 8%)', qty: 1, amount: 9720 }],
+    }),
+    R({
+      typeName: 'Invoice',
+      number: 'KP-INV-77120',
+      supplierName: 'Kurier Pantas Sdn Bhd',
+      supplierTin: 'C27733015020',
+      issuedAt: T - 5 * DAY,
+      validatedAt: T - 5 * DAY + 4 * MIN,
+      total: 486.4,
+      status: 'valid',
+      lines: [{ desc: 'Courier, October deliveries', qty: 64, amount: 486.4 }],
+    }),
+    R({
+      typeName: 'Invoice',
+      number: 'PK-5531',
+      supplierName: 'Percetakan Kilat Enterprise',
+      supplierTin: 'C19986420010',
+      issuedAt: T - 6 * DAY,
+      validatedAt: T - 6 * DAY + MIN,
+      total: 212,
+      status: 'cancelled',
+      cancelledAt: T - 6 * DAY + 2 * HOUR,
+      rejectReason: 'Issued twice by mistake',
+      lines: [{ desc: 'Receipt rolls, 80 mm', qty: 40, amount: 212 }],
+    }),
+    R({
+      typeName: 'Credit Note',
+      number: 'CN-TB-0912',
+      supplierName: 'Teknologi Borong Sdn Bhd',
+      supplierTin: 'C24518830060',
+      issuedAt: T - 12 * DAY,
+      validatedAt: T - 12 * DAY + 2 * MIN,
+      total: 600,
+      status: 'valid',
+      lines: [{ desc: 'Returned stock: tablet cases', qty: 20, amount: 600 }],
+    }),
+  ];
+}
+
 export function makeSeed(realStart: number): State {
   nid = 0;
   const c: Ctx = { rand: rng(20261103), docs: [], buyers: [], items: [], requests: [], runs: [], counters: {} };
@@ -934,6 +1026,7 @@ export function makeSeed(realStart: number): State {
   const clients: ClientMeta[] = all.map((b) => ({ id: `c_${b.id}`, bizId: b.id, name: b.name, tin: b.tin }));
   return {
     v: STATE_VERSION,
+    workspace: 'demo',
     realStart,
     persona: 'owner',
     activeBizId: 'jaya',
@@ -943,10 +1036,73 @@ export function makeSeed(realStart: number): State {
     buyers: c.buyers,
     items: c.items,
     docs: c.docs,
+    received: seedReceived(c.rand),
     requests: c.requests,
     runs: c.runs,
     counters: c.counters,
     settings: { autoIssue: false, speed: 'realistic', rejectNext: false },
     guide: { open: true, done: { fix: false, big: false, request: false, monthend: false, accountant: false } },
   };
+}
+
+// ---------------------------------------------------------------------------
+// Live workspace: your own business, empty, on the real clock. Its details are filled in on
+// the Settings page (or from the taxpayer's MyInvois QR code) before anything is sent.
+
+export function blankBusiness(id: string, name = '', tin = ''): Business {
+  return {
+    id,
+    name,
+    short: name || 'My business',
+    initials: name ? initials(name) : 'MB',
+    tin,
+    brn: '',
+    sst: '',
+    msic: '',
+    msicName: '',
+    activity: '',
+    address: { line1: '', postcode: '', city: '', state: '14' },
+    phone: '',
+    email: '',
+    phase: 4,
+    branches: [{ id: 'MAIN', name: 'Main', prefix: 'R-' }],
+    owner: { name: 'You', role: 'Owner', initials: 'ME' },
+    tone: 0,
+  };
+}
+
+/** A month-end run for every branch that has none for the current period. */
+export function withPeriodRuns(s: State): State {
+  const missing: MonthEndRun[] = [];
+  for (const b of s.businesses) {
+    for (const br of b.branches) {
+      if (!s.runs.some((r) => r.bizId === b.id && r.branchId === br.id && r.period === PERIOD)) {
+        missing.push({ id: `run_${b.id}_${br.id}_${PERIOD}`, bizId: b.id, branchId: br.id, period: PERIOD, stage: 'no-file', docIds: [] });
+      }
+    }
+  }
+  return missing.length ? { ...s, runs: [...s.runs, ...missing] } : s;
+}
+
+export function makeLiveSeed(realStart: number): State {
+  const biz = blankBusiness('mine');
+  return withPeriodRuns({
+    v: STATE_VERSION,
+    workspace: 'live',
+    realStart,
+    persona: 'owner',
+    activeBizId: biz.id,
+    firm: { name: 'Your firm', initials: 'YF', tin: '', user: { name: 'You', role: 'Intermediary', initials: 'ME' } },
+    businesses: [biz],
+    clients: [{ id: `c_${biz.id}`, bizId: biz.id, name: biz.short, tin: biz.tin }],
+    buyers: [],
+    items: [],
+    docs: [],
+    received: [],
+    requests: [],
+    runs: [],
+    counters: { [biz.id]: { '01': 0, '02': 0, '03': 0, '04': 0 } },
+    settings: { autoIssue: false, speed: 'realistic', rejectNext: false },
+    guide: { open: false, done: { fix: false, big: false, request: false, monthend: false, accountant: false } },
+  });
 }

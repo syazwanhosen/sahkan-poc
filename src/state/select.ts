@@ -1,4 +1,4 @@
-import type { Business, ClientMeta, Doc, MonthEndRun, Receipt, State } from '../types';
+import type { Business, ClientMeta, Doc, MonthEndRun, Receipt, ReceivedDoc, State } from '../types';
 import { CANCEL_WINDOW, DAY, HOUR, PERIOD } from '../lib/clock';
 import { signedTotal, totals } from '../lib/rules';
 import { computeSplit, type Split } from '../lib/split';
@@ -21,6 +21,12 @@ export function windowLeft(d: Doc, t: number): number {
   return d.validatedAt + CANCEL_WINDOW - t;
 }
 
+/** Time left to reject a received e-invoice; 0 once asked, cancelled or past 72 hours. */
+export function rejectLeft(r: ReceivedDoc, t: number): number {
+  if (r.status !== 'valid' || r.rejectRequestedAt || !r.validatedAt) return 0;
+  return Math.max(0, r.validatedAt + CANCEL_WINDOW - t);
+}
+
 export const branchName = (b: Business | undefined, id: string) => b?.branches.find((x) => x.id === id)?.name ?? id;
 
 export function attention(s: State, bizId: string, t: number) {
@@ -32,7 +38,9 @@ export function attention(s: State, bizId: string, t: number) {
   });
   const pending = s.requests.filter((r) => r.bizId === bizId && r.status === 'pending');
   const drafts = docs.filter((d) => d.status === 'draft');
-  return { invalid, closing, pending, drafts };
+  // Live only: buyers who asked LHDN to reject an e-invoice, which stays valid until it's cancelled.
+  const rejected = docs.filter((d) => d.status === 'valid' && d.live?.rejectRequestedAt);
+  return { invalid, closing, pending, drafts, rejected };
 }
 
 export function stats(s: State, bizId: string, t: number) {

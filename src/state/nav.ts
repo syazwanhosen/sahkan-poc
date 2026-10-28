@@ -9,6 +9,7 @@ export type Route =
   | { name: 'compose'; type?: DocType; fromId?: string; editId?: string; buyerId?: string }
   | { name: 'doc'; id: string; tab?: 'paper' | 'data' }
   | { name: 'requests' }
+  | { name: 'received'; id?: string }
   | { name: 'monthend'; runId?: string }
   | { name: 'buyers' }
   | { name: 'items' }

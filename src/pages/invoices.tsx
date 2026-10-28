@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Download, FileText, Plus, Search } from 'lucide-react';
 import type { Doc } from '../types';
 import { HOUR } from '../lib/clock';
@@ -7,6 +7,7 @@ import { useDownloads } from '../lib/downloads';
 import { useApp } from '../state/store';
 import { navigate, type Filter } from '../state/nav';
 import { branchName, byNewest, docTotal, docsOf, windowLeft } from '../state/select';
+import { syncLive } from '../state/actions';
 import { Button, Empty, Input, PageHeader, Panel, ic, useNow } from '../ui';
 import { DocTable, csvCell, offerFile, useBizOf } from './common';
 
@@ -33,6 +34,7 @@ export function InvoicesPage({ filter: initial = 'all', q: initialQ = '' }: { fi
   const s = useApp();
   const t = useNow(15_000);
   const biz = useBizOf(s);
+  useEffect(() => void syncLive(biz.id), [biz.id]);
   const canSave = useDownloads();
   const [filter, setFilter] = useState<Filter>(initial);
   const [q, setQ] = useState(initialQ);

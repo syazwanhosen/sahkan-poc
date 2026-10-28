@@ -22,7 +22,7 @@ export function shortReason(d: Doc): string {
   if (f === 'phone') return "has a buyer phone number LHDN can't read";
   if (f === 'idValue') return "has a buyer ID that doesn't match their TIN";
   if (f === 'issued') return 'was issued more than 72 hours before it was sent';
-  return 'has buyer details to fix';
+  return f ? 'has buyer details to fix' : 'has details LHDN could not accept';
 }
 
 export function nextStep(d: Doc, t: number): { text: string; tone?: 'bad' | 'due' | 'info' } {

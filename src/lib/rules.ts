@@ -1,9 +1,11 @@
 // LHDN e-invoice field rules, written once and shared by the composer,
 // the buyer request page and the simulated MyInvois validation.
-import type { DocType, Line, Party, TaxCode } from '../types';
+import type { Business, DocType, IdType, Line, Party, TaxCode } from '../types';
 
 export const RM10K = 10_000;
 export const GENERAL_PUBLIC_TIN = 'EI00000000010';
+/** LHDN rule ERR236: the general-public TIN (with ID "NA") is accepted only on classification 004 lines. */
+export const GENERAL_PUBLIC_CLASS = '004';
 
 export const CLASSIFICATIONS: { code: string; label: string }[] = [
   { code: '001', label: 'Breastfeeding equipment' },
@@ -96,6 +98,17 @@ export const STATES: [string, string][] = [
 ];
 export const stateName = (code: string) => STATES.find((s) => s[0] === code)?.[1] ?? '';
 
+/** A state code from a code or a name as MyInvois writes it ("PERAK", "WILAYAH PERSEKUTUAN KUALA LUMPUR"). */
+export function stateCodeOf(raw: string): string {
+  const s = raw.trim().toUpperCase();
+  if (/^\d{2}$/.test(s) && STATES.some(([c]) => c === s)) return s;
+  const name = s
+    .replace(/^(W\.\s*P\.|WP|WILAYAH PERSEKUTUAN)\s*/, '')
+    .replace(/^PENANG$/, 'PULAU PINANG')
+    .replace(/^MALACCA$/, 'MELAKA');
+  return STATES.find(([, n]) => n.toUpperCase().replace(/^W\.P\. /, '') === name)?.[0] ?? '';
+}
+
 export const DOC_LABEL: Record<DocType, string> = {
   '01': 'Invoice',
   '02': 'Credit note',
@@ -176,6 +189,28 @@ export function partyProblems(p: Party): { field: string; message: string; fix?:
   const pc = checkPostcode(p.address.postcode);
   if (!pc.ok) out.push({ field: 'postcode', message: pc.message! });
   if (!p.address.line1.trim()) out.push({ field: 'address', message: 'Add the buyer address.' });
+  return out;
+}
+
+export const ID_LABEL: Record<IdType, string> = { BRN: 'BRN', NRIC: 'MyKad', PASSPORT: 'Passport', ARMY: 'Army ID' };
+
+/** What the supplier block of every e-invoice needs. MyInvois rejects a document without it. */
+export function businessProblems(b: Business): { field: string; message: string }[] {
+  const out: { field: string; message: string }[] = [];
+  if (!b.name.trim()) out.push({ field: 'name', message: 'Add the registered business name.' });
+  const tin = checkTin(b.tin);
+  if (!tin.ok) out.push({ field: 'tin', message: tin.message! });
+  const kind = b.idType ?? 'BRN';
+  if (!b.brn.trim()) out.push({ field: 'brn', message: kind === 'BRN' ? 'Add the business registration number.' : 'Add the ID number that goes with the TIN.' });
+  else if (kind === 'NRIC' && !checkMykad(b.brn).ok) out.push({ field: 'brn', message: checkMykad(b.brn).message! });
+  if (!/^\d{5}$/.test(b.msic.trim())) out.push({ field: 'msic', message: 'MSIC codes have 5 digits.' });
+  if (!b.msicName.trim()) out.push({ field: 'msicName', message: 'Describe the business activity.' });
+  if (!b.address.line1.trim()) out.push({ field: 'address', message: 'Add the business address.' });
+  if (!checkPostcode(b.address.postcode).ok) out.push({ field: 'postcode', message: 'Malaysian postcodes have 5 digits.' });
+  if (!b.address.city.trim()) out.push({ field: 'city', message: 'Add the city.' });
+  const phone = checkPhone(b.phone);
+  if (!phone.ok) out.push({ field: 'phone', message: phone.message! });
+  if (!checkEmail(b.email).ok) out.push({ field: 'email', message: 'Check the email address.' });
   return out;
 }
 

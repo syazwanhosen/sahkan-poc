@@ -2,13 +2,14 @@ import { useMemo, useState } from 'react';
 import { CircleAlert, CircleCheck, Info, Plus, Send, Trash2, UserPlus, Users } from 'lucide-react';
 import type { Business, Doc, DocType, Line, Party, State, TinStatus } from '../types';
 import { CANCEL_WINDOW, MIN, now } from '../lib/clock';
-import { CLASSIFICATIONS, DOC_LABEL, GENERAL_PUBLIC_TIN, RM10K, TAX_TYPES, lineAmount, totals } from '../lib/rules';
+import { CLASSIFICATIONS, DOC_LABEL, GENERAL_PUBLIC_CLASS, GENERAL_PUBLIC_TIN, RM10K, TAX_TYPES, businessProblems, lineAmount, totals } from '../lib/rules';
 import { ago, dateTime, fromLocalInput, initials, plural, rm, rmx, time, toLocalInput } from '../lib/format';
 import { uid } from '../lib/ids';
 import { GENERAL_PUBLIC, partyOf } from '../data/seed';
 import { getState, useApp } from '../state/store';
 import { back, navigate } from '../state/nav';
-import { EMPTY_PARTY, addBuyer, peekNumber, saveDoc, submitDocs, verifyTin, type Draft } from '../state/actions';
+import { EMPTY_PARTY, addBuyer, peekNumber, saveDoc, submitDocs, tinMismatch, verifyTin, type Draft } from '../state/actions';
+import { useLive } from '../state/live';
 import { toast } from '../state/toast';
 import { PartyFields, TinChip, problemsOf, type Problem } from '../party';
 import { Avatar, Button, Chip, Combobox, Field, Input, Note, NumInput, PageHeader, Panel, Segmented, Select, cx, ic, useNow } from '../ui';
@@ -116,6 +117,7 @@ interface Check {
 export function ComposePage(props: { type?: DocType; fromId?: string; editId?: string; buyerId?: string }) {
   const s = useApp();
   const biz = useBizOf(s);
+  const live = useLive();
   const t = useNow(20_000);
   const init = useMemo(() => initialDraft(getState(), biz, props), []); // eslint-disable-line react-hooks/exhaustive-deps
   const [d, setD] = useState<Draft>(init.draft);
@@ -171,7 +173,7 @@ export function ComposePage(props: { type?: DocType; fromId?: string; editId?: s
   const checkTinNow = async () => {
     if (!buyer) return;
     setTinBusy(true);
-    const r = await verifyTin(buyer.tin);
+    const r = await verifyTin(buyer);
     setTinBusy(false);
     setTin(r, now());
     if (r === 'verified') toast(`TIN ${buyer.tin.toUpperCase()} matched with LHDN`);
@@ -179,6 +181,21 @@ export function ComposePage(props: { type?: DocType; fromId?: string; editId?: s
 
   // The same checks MyInvois runs, before anything is sent.
   const checks: Check[] = [];
+  // Live, your own business is the supplier on the document, and MyInvois rejects gaps there too.
+  const bizGaps = s.workspace === 'live' ? businessProblems(biz) : [];
+  const mismatch = live?.taxpayerTin ? tinMismatch(biz.id) : null;
+  if (mismatch) {
+    checks.push({ key: 'login', ok: false, title: "Your MyInvois login is for another TIN", sub: mismatch, fix: { label: 'Open settings', run: () => navigate({ name: 'settings' }) } });
+  }
+  if (bizGaps.length) {
+    checks.push({
+      key: 'supplier',
+      ok: false,
+      title: 'Finish your business details',
+      sub: bizGaps[0].message,
+      fix: { label: 'Open settings', run: () => navigate({ name: 'settings' }) },
+    });
+  }
   if (!buyer) {
     checks.push({ key: 'buyer', ok: false, title: 'Choose a buyer', sub: 'Or use General public for a walk-in sale.' });
   } else if (general) {
@@ -234,6 +251,15 @@ export function ComposePage(props: { type?: DocType; fromId?: string; editId?: s
   const n = d.lines.length;
   const withCls = d.lines.filter((l) => l.cls).length;
   checks.push({ key: 'cls', ok: withCls === n && n > 0, title: 'Every item has a classification', sub: `${withCls} of ${plural(n, 'item')}` });
+  if (general && d.lines.some((l) => l.cls !== GENERAL_PUBLIC_CLASS)) {
+    checks.push({
+      key: 'gp-cls',
+      ok: false,
+      title: `General public needs classification ${GENERAL_PUBLIC_CLASS}`,
+      sub: 'LHDN accepts the general-public TIN only on consolidated (004) lines. For anything else, use the buyer\'s own TIN.',
+      fix: { label: `Use ${GENERAL_PUBLIC_CLASS}`, run: () => setD((x) => ({ ...x, lines: x.lines.map((l) => ({ ...l, cls: GENERAL_PUBLIC_CLASS })) })) },
+    });
+  }
   const unfinished = d.lines.filter((l) => !l.desc.trim() || !(l.qty > 0) || !(l.price > 0)).length;
   checks.push({
     key: 'items',

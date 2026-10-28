@@ -5,6 +5,7 @@ import {
   Check,
   CircleAlert,
   Clock,
+  CloudDownload,
   Download,
   FilePlus2,
   FileText,
@@ -12,6 +13,7 @@ import {
   LoaderCircle,
   Mail,
   PencilLine,
+  RefreshCw,
   Send,
   Undo2,
   Wrench,
@@ -23,10 +25,12 @@ import { DOC_LABEL } from '../lib/rules';
 import { dateTime, int, left, periodLabel, rmx, time } from '../lib/format';
 import { useDownloads } from '../lib/downloads';
 import { submissionPreview } from '../lib/ubl';
+import { errorText, validationUrl } from '../lib/myinvois';
 import { useApp } from '../state/store';
+import { useLive } from '../state/live';
 import { back, navigate } from '../state/nav';
 import { bizById, docTotal, windowLeft } from '../state/select';
-import { cancelDoc, emailAgain, submitDocs } from '../state/actions';
+import { cancelDoc, emailAgain, liveCopy, refreshDoc, submitDocs } from '../state/actions';
 import { InvoicePaper } from '../paper';
 import { Button, Chip, CopyButton, Empty, Modal, Note, PageHeader, Panel, Select, StatusChip, Tabs, cx, ic, useNow } from '../ui';
 import { downloadPdf, offerFile } from './common';
@@ -45,6 +49,8 @@ function Timeline({ d }: { d: Doc }) {
   else steps.push({ label: 'Validated', state: d.validatedAt ? 'done' : 'todo', at: d.validatedAt });
   if (d.status === 'cancelled') steps.push({ label: 'Cancelled', state: 'bad', at: d.cancelledAt });
   else if (d.consolidated || d.buyer.kind === 'general') steps.push({ label: 'No email needed', state: d.validatedAt ? 'done' : 'todo', note: 'General public buyer' });
+  // The real MyInvois tells the buyer itself, by email, once the e-invoice is valid.
+  else if (d.live) steps.push({ label: 'Buyer told by LHDN', state: d.validatedAt ? 'done' : 'todo', at: d.validatedAt });
   else if (!d.buyer.email) steps.push({ label: 'Emailed to buyer', state: 'todo', note: 'No email on file' });
   else steps.push({ label: 'Emailed to buyer', state: d.emailedAt ? 'done' : d.status === 'valid' ? 'now' : 'todo', at: d.emailedAt, note: d.status === 'valid' && !d.emailedAt ? 'Sending' : undefined });
 
@@ -135,17 +141,73 @@ function highlight(json: string): ReactNode[] {
   return out;
 }
 
+/** The document as MyInvois stores it (Get Document), signed when it went as version 1.1. */
+function LhdnCopy({ d }: { d: Doc }) {
+  const [copy, setCopy] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  if (!copy) {
+    return (
+      <div className="stack-sm">
+        <div>
+          <Button
+            size="sm"
+            icon={ic(CloudDownload, 'ico-sm')}
+            busy={busy}
+            onClick={async () => {
+              setBusy(true);
+              setError(null);
+              try {
+                const raw = await liveCopy(d.id);
+                try {
+                  setCopy(JSON.stringify(JSON.parse(raw), null, 2));
+                } catch {
+                  setCopy(raw);
+                }
+              } catch (e) {
+                setError(errorText(e));
+              }
+              setBusy(false);
+            }}
+            id="doc-lhdn-copy"
+          >
+            Show the copy LHDN holds
+          </Button>
+        </div>
+        {error && (
+          <Note tone="bad" icon={ic(CircleAlert)}>
+            {error}
+          </Note>
+        )}
+      </div>
+    );
+  }
+  return (
+    <>
+      <div className="row" style={{ justifyContent: 'space-between' }}>
+        <h3 className="h3">The copy LHDN holds</h3>
+        <CopyButton text={copy} label="Copy LHDN's copy" />
+      </div>
+      <pre className="code" tabIndex={0} aria-label="The document as MyInvois stores it">
+        {highlight(copy)}
+      </pre>
+    </>
+  );
+}
+
 function DataTab({ d, refDoc, canSave }: { d: Doc; refDoc?: Doc; canSave: boolean }) {
   const s = useApp();
+  const status = useLive();
   const biz = bizById(s, d.bizId)!;
+  const version = d.live?.version ?? (s.workspace === 'live' ? status?.version : undefined);
   const [p, setP] = useState<Awaited<ReturnType<typeof submissionPreview>> | null>(null);
   useEffect(() => {
     let live = true;
-    submissionPreview(d, biz, refDoc).then((x) => live && setP(x));
+    submissionPreview(d, biz, refDoc, version).then((x) => live && setP(x));
     return () => {
       live = false;
     };
-  }, [d, biz, refDoc]);
+  }, [d, biz, refDoc, version]);
   if (!p) return <div className="pad hint">Building the document…</div>;
   const body = JSON.stringify(
     { documents: [{ ...p.body.documents[0], document: p.b64.length > 64 ? `${p.b64.slice(0, 64)}… (${int(p.b64.length)} characters)` : p.b64 }] },
@@ -155,13 +217,15 @@ function DataTab({ d, refDoc, canSave }: { d: Doc; refDoc?: Doc; canSave: boolea
   return (
     <div className="pad stack">
       <Note tone="info">
-        This is the UBL 2.1 JSON the MyInvois API expects for this e-invoice, built from the data on this page. In the demo it isn't sent anywhere.
+        {s.workspace === 'live'
+          ? `This is the UBL 2.1 JSON built from this e-invoice. The server ${version === '1.1' ? 'adds the digital signature, then ' : ''}sends it to MyInvois, so the hash LHDN sees differs from the one here.`
+          : "This is the UBL 2.1 JSON the MyInvois API expects for this e-invoice, built from the data on this page. In the demo it isn't sent anywhere."}
       </Note>
       <dl className="kv">
         <dt>Endpoint</dt>
         <dd className="mono">POST /api/v1.0/documentsubmissions</dd>
         <dt>Format</dt>
-        <dd>JSON, UBL 2.1, version 1.1</dd>
+        <dd>JSON, UBL 2.1, version {version ?? '1.1'}{version === '1.1' && s.workspace === 'live' ? ', signed' : ''}</dd>
         <dt>Size</dt>
         <dd>{int(p.bytes)} bytes</dd>
         <dt>SHA-256</dt>
@@ -188,6 +252,7 @@ function DataTab({ d, refDoc, canSave }: { d: Doc; refDoc?: Doc; canSave: boolea
       <pre className="code" tabIndex={0} aria-label="Request body" style={{ maxHeight: 260 }}>
         {highlight(body)}
       </pre>
+      {d.live && d.uuid && (d.status === 'valid' || d.status === 'cancelled') && <LhdnCopy d={d} />}
     </div>
   );
 }
@@ -274,6 +339,7 @@ export function DocPage({ id, tab: initialTab = 'paper' }: { id: string; tab?: '
   const canSave = useDownloads();
   const [tab, setTab] = useState<'paper' | 'data'>(initialTab);
   const [cancelOpen, setCancelOpen] = useState(false);
+  const [checking, setChecking] = useState(false);
   const d = s.docs.find((x) => x.id === id);
   const prev = useRef(d?.status);
   const [stamp, setStamp] = useState(false);
@@ -298,7 +364,14 @@ export function DocPage({ id, tab: initialTab = 'paper' }: { id: string; tab?: '
   const req = d.requestId ? s.requests.find((r) => r.id === d.requestId) : undefined;
   const l = windowLeft(d, t);
   const canCancel = d.status === 'valid' && !d.consolidated && l > 0;
-  const email = d.status === 'valid' && !!d.buyer.email && !d.consolidated;
+  // Live e-invoices are emailed to the buyer by MyInvois itself.
+  const email = d.status === 'valid' && !!d.buyer.email && !d.consolidated && !d.live;
+  const link = d.live && d.uuid && d.longId ? validationUrl(d.live.env, d.uuid, d.longId) : undefined;
+  const checkNow = async () => {
+    setChecking(true);
+    await refreshDoc(d.id);
+    setChecking(false);
+  };
 
   return (
     <>
@@ -329,6 +402,11 @@ export function DocPage({ id, tab: initialTab = 'paper' }: { id: string; tab?: '
                 Email buyer
               </Button>
             )}
+            {d.live && d.uuid && d.status !== 'draft' && (
+              <Button icon={ic(RefreshCw, 'ico-sm')} busy={checking} onClick={checkNow} id="doc-refresh">
+                Check with LHDN
+              </Button>
+            )}
             {canSave && (
               <Button icon={ic(Download, 'ico-sm')} onClick={() => downloadPdf(d, biz, refDoc)} id="doc-pdf">
                 Download PDF
@@ -342,6 +420,23 @@ export function DocPage({ id, tab: initialTab = 'paper' }: { id: string; tab?: '
         <Timeline d={d} />
         <WindowBox d={d} t={t} />
       </section>
+
+      {d.status === 'valid' && d.live?.rejectRequestedAt && (
+        <Note tone="due" icon={ic(CircleAlert)}>
+          <div className="strong">The buyer asked LHDN to reject this e-invoice</div>
+          <div style={{ marginTop: 2 }}>
+            {d.live.rejectReason ? `Their reason: ${d.live.rejectReason}. ` : ''}It stays valid until you cancel it.{' '}
+            {canCancel ? 'Cancel it if they are right, or talk to them first.' : 'The cancel window has closed, so issue a credit note if they are right.'}
+          </div>
+          {canCancel && (
+            <div style={{ marginTop: 8 }}>
+              <Button size="sm" variant="danger" icon={ic(Ban, 'ico-sm')} onClick={() => setCancelOpen(true)} id="doc-reject-cancel">
+                Cancel e-invoice
+              </Button>
+            </div>
+          )}
+        </Note>
+      )}
 
       {d.status === 'invalid' && d.errors?.length ? (
         <Panel title="Why LHDN rejected it" sub={`${d.errors.length === 1 ? '1 problem' : `${d.errors.length} problems`}. Nothing was filed, so you can fix it and send it again with the same number.`}>
@@ -451,6 +546,25 @@ export function DocPage({ id, tab: initialTab = 'paper' }: { id: string; tab?: '
                     <>
                       <dt>Attempts</dt>
                       <dd>{d.attempts}</dd>
+                    </>
+                  )}
+                  {d.live && (
+                    <>
+                      <dt>Filed on</dt>
+                      <dd>
+                        MyInvois {d.live.env}, version {d.live.version}
+                        {d.live.onBehalfOf ? ', by an intermediary' : ''}
+                      </dd>
+                    </>
+                  )}
+                  {link && (
+                    <>
+                      <dt>Public link</dt>
+                      <dd>
+                        <a href={link} target="_blank" rel="noreferrer" id="doc-portal">
+                          Open on MyInvois
+                        </a>
+                      </dd>
                     </>
                   )}
                   <dt>Buyer told</dt>
