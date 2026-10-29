@@ -4,7 +4,7 @@ import { App } from './App';
 import { getState, initStore, setState } from './state/store';
 import { initRoute, type Route } from './state/nav';
 import { resumePending } from './state/actions';
-import { refreshLive } from './state/live';
+import { askAccessKey, refreshLive } from './state/live';
 
 initStore();
 
@@ -37,8 +37,13 @@ if (start) {
   initRoute({ name: 'clients' });
 }
 
-// The live workspace needs to know the server's MyInvois setup before it resumes polling.
+// The live workspace needs to know the server's MyInvois setup before it resumes polling, and
+// asks for the access key when the server wants one this browser doesn't have.
 const live = refreshLive();
-if (getState().workspace === 'live') void live.then(() => resumePending());
-else resumePending();
+if (getState().workspace === 'live') {
+  void live.then((s) => {
+    if (s?.locked) askAccessKey();
+    resumePending();
+  });
+} else resumePending();
 createRoot(document.getElementById('root')!).render(<App />);

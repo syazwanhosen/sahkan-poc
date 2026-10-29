@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
-import { ChevronDown, ChevronRight, CircleAlert, FlaskConical, History, Layers, PencilLine, PlugZap, SearchCheck, ShieldCheck, Smartphone, TriangleAlert } from 'lucide-react';
+import { ChevronDown, ChevronRight, CircleAlert, FlaskConical, History, KeyRound, Layers, PencilLine, PlugZap, SearchCheck, ShieldCheck, Smartphone, TriangleAlert } from 'lucide-react';
 import type { Business, IdType, TinStatus } from '../types';
 import { ID_LABEL, STATES, businessProblems, stateName } from '../lib/rules';
 import { date, dateTime, plural } from '../lib/format';
 import type { DocSummary, DocumentType, DocumentTypeVersion, Page } from '../lib/myinvois';
 import { errorText } from '../lib/myinvois';
 import { useApp } from '../state/store';
-import { refreshLive, useLive } from '../state/live';
+import { askAccessKey, refreshLive, useLive } from '../state/live';
 import { navigate } from '../state/nav';
 import { activeBiz } from '../state/select';
 import { businessFromTaxpayer, checkLive, liveDocType, liveDocTypeVersion, liveRecent, openWorkspace, setSettings, tinMismatch, updateBusiness, verifyTin } from '../state/actions';
@@ -404,7 +404,7 @@ function ConnectionPanel() {
             <dt>Validation</dt>
             <dd>Asynchronous, about {s.settings.speed === 'quick' ? 'half a second' : 'two seconds'} per document</dd>
           </dl>
-          {live?.configured ? (
+          {live?.configured || live?.locked ? (
             <Note tone="info" icon={ic(PlugZap)}>
               The server has a MyInvois {live.env} system set up. Switch to work with your own business on the real API. The demo stays as it is.
               <div style={{ marginTop: 10 }}>
@@ -414,10 +414,17 @@ function ConnectionPanel() {
               </div>
             </Note>
           ) : (
-            <p className="hint">
-              To use the real MyInvois, put your sandbox client ID and secret in <span className="mono">.env</span> and restart <span className="mono">npm run dev</span>. The README
-              explains each setting.
-            </p>
+            <>
+              <p className="hint">
+                To use the real MyInvois, give the server your sandbox client ID and secret: in <span className="mono">.env</span> for{' '}
+                <span className="mono">npm run dev</span>, or as environment variables on Vercel. The README explains each setting.
+              </p>
+              {live?.problems.map((p) => (
+                <Note key={p} tone="bad" icon={ic(CircleAlert)}>
+                  {p}
+                </Note>
+              ))}
+            </>
           )}
         </div>
       </Panel>
@@ -452,13 +459,23 @@ function ConnectionPanel() {
       title="MyInvois connection"
       actions={
         <Chip tone={ok ? 'ok' : 'bad'} icon={ic(ok ? ShieldCheck : TriangleAlert, 'ico-sm')}>
-          {!ok ? 'Not set up' : live!.env === 'production' ? 'Production' : 'Sandbox'}
+          {!ok ? (live?.locked ? 'Locked' : 'Not set up') : live!.env === 'production' ? 'Production' : 'Sandbox'}
         </Chip>
       }
       pad
     >
       <div className="stack">
-        {live === null && <Note tone="bad">The app can't reach its server, so nothing can go to MyInvois. Start it with npm run dev.</Note>}
+        {live === null && <Note tone="bad">The app can't reach its server, so nothing can go to MyInvois. When you run it yourself, start it with npm run dev.</Note>}
+        {live?.locked && (
+          <Note tone="due" icon={ic(KeyRound)}>
+            The server asks for its access key before the app may use MyInvois.
+            <div style={{ marginTop: 10 }}>
+              <Button variant="primary" icon={ic(KeyRound, 'ico-sm')} onClick={() => askAccessKey()} id="settings-key">
+                Enter the access key
+              </Button>
+            </div>
+          </Note>
+        )}
         {live && (
           <dl className="kv">
             <dt>Environment</dt>

@@ -3,7 +3,7 @@
 Proof-of-concept of an LHDN e-invoicing web app. It has two workspaces:
 
 - **Demo**: sample data, a simulated MyInvois and a demo clock. Nothing is sent to LHDN. This is all the single-file build (claude.ai artifact) can do.
-- **MyInvois sandbox (or production)**: your own business on the real MyInvois API, through a small server that holds the credentials and the signing key. It runs on the real clock.
+- **MyInvois sandbox (or production)**: your own business on the real MyInvois API, through a small server that holds the credentials and the signing key: Vite's dev server locally, a Vercel Function when deployed. It runs on the real clock.
 
 ## Run
 
@@ -26,6 +26,19 @@ Open a view directly with a hash: `#clients`, `#monthend`, `#requests`, `#buyer`
 Behind a TLS-inspecting proxy (Zscaler and similar), Node can't verify LHDN's certificate. Point `MYINVOIS_CA_FILE` at the proxy's root certificate (`.env.example` shows how to export it on a Mac).
 
 The live workspace is kept in localStorage, so it survives closing the browser. The demo is kept in sessionStorage as before. Switching between them keeps both.
+
+## Deploy to Vercel
+
+The page is static, and the MyInvois server runs as one Vercel Function (`api/myinvois.ts`); `vercel.json` sends every `/api/myinvois/*` call to it.
+
+1. Import the repository in Vercel, or run `vercel` in this folder. `vercel.json` holds the settings: the Vite build, a clean `npm ci` (the committed `node_modules` has macOS binaries), and the function in Singapore (`sin1`), the region closest to LHDN.
+2. In the project's **Settings > Environment Variables**, add `MYINVOIS_ENV`, `MYINVOIS_CLIENT_ID`, `MYINVOIS_CLIENT_SECRET` and `MYINVOIS_ACCESS_KEY`, a long random value such as the output of `openssl rand -base64 32`. The intermediary system is optional, as in `.env.example`. Pasting your `.env` is fine: the function ignores `MYINVOIS_CA_FILE`, and `MYINVOIS_ALLOWED_HOSTS` only matters locally.
+3. To send signed version 1.1 documents, paste the certificate and key themselves into `MYINVOIS_CERT_PEM` and `MYINVOIS_KEY_PEM`: a deployment has no files for `MYINVOIS_CERT_FILE`. One line with `\n` for each line break works too.
+4. Redeploy after changing a variable. A deployment keeps the values it was built with.
+
+Anyone with the link can open the demo. **Use MyInvois sandbox** asks for the access key once, and the browser keeps it. Without `MYINVOIS_ACCESS_KEY` the function refuses every MyInvois call, so a deployment can't expose the credentials by mistake. To make the whole site private too, turn on Vercel's Deployment Protection.
+
+Each function instance logs in to MyInvois on its own and keeps the token while it stays warm, so the app logs in more often than under `npm run dev`. Vercel limits a request to 4.5 MB; the largest submission MyInvois takes (5 MB once base64-encoded) is about 3.75 MB as the browser sends it. `.vercelignore` keeps `.env` and keys out of `vercel` CLI uploads, which don't read `.gitignore`.
 
 ## What you can try
 
@@ -68,15 +81,17 @@ A validated live e-invoice's QR code opens its public validation page (`{portal}
 
 ### Server safety
 
-The server only answers this computer (`localhost`), refuses calls from other sites (Origin check, no CORS), and needs JSON bodies. Secrets never reach the browser: `/api/myinvois/status` reports only which systems are set up. Set `MYINVOIS_ALLOWED_HOSTS` to open it to other devices.
+Under `npm run dev` the server only answers this computer (`localhost`); set `MYINVOIS_ALLOWED_HOSTS` to open it to other devices. On Vercel it answers any of the project's domains, but only browsers that send the access key (`Authorization: Bearer`, compared in constant time), and none until `MYINVOIS_ACCESS_KEY` is set. Set the key in `.env` to try that flow locally. Everywhere, it refuses calls from other sites (Origin check, no CORS) and needs JSON bodies. Secrets never reach the browser: `/api/myinvois/status` reports only which systems are set up, and without the key only whether there is anything to unlock.
 
 ### Before production
 
-This runs inside Vite's dev and preview servers, which is fine for a proof of concept. For production, mount `createHandler` (`server/handler.ts`) in a real Node service and add user sign-in in front of it, a database in place of localStorage, and a queue for submissions. Then register the production ERP system and use a certificate from a Malaysian CA (MCMC's list of licensees).
+This runs inside Vite's dev and preview servers, or as a Vercel Function behind one shared access key, which is fine for a proof of concept. For production, put user sign-in in front of `createHandler` (`server/handler.ts`) in place of the shared key, and add a database in place of localStorage and a queue for submissions. Then register the production ERP system and use a certificate from a Malaysian CA (MCMC's list of licensees).
 
 ## Structure
 
 ```
+api/
+  myinvois.ts           the same endpoints as a Vercel Function (vercel.json routes /api/myinvois/* to it)
 server/
   config.ts             MYINVOIS_* settings, sandbox and production URLs
   client.ts             MyInvois API client: tokens, retries on 401 and 429, every endpoint

@@ -1,5 +1,6 @@
-// MyInvois settings, read from MYINVOIS_* variables (vite.config.ts loads them from .env).
-// Secrets stay on this side: the browser only ever sees what /status reports.
+// MyInvois settings, read from MYINVOIS_* variables (vite.config.ts loads them from .env; on
+// Vercel they are the project's environment variables). Secrets stay on this side: the browser
+// only ever sees what /status reports.
 
 export type MyInvoisEnv = 'sandbox' | 'production';
 export type DocVersion = '1.0' | '1.1';
@@ -9,6 +10,9 @@ export interface Credentials {
   clientSecret: string;
 }
 
+/** A PEM file, or the PEM itself for hosts without files of their own (Vercel). */
+export type Pem = { file: string } | { text: string };
+
 export interface Config {
   env: MyInvoisEnv;
   apiBase: string;
@@ -17,9 +21,9 @@ export interface Config {
   taxpayer?: Credentials;
   /** An intermediary's ERP system, acting for clients through the onbehalfof header. */
   intermediary?: Credentials;
-  /** PEM certificate and private key for v1.1 signatures. */
-  certFile?: string;
-  keyFile?: string;
+  /** Certificate and private key for v1.1 signatures. */
+  cert?: Pem;
+  key?: Pem;
   keyPassphrase?: string;
   /** Forces a document version; otherwise 1.1 when a certificate is set, else 1.0. */
   version?: DocVersion;
@@ -27,6 +31,8 @@ export interface Config {
   caFile?: string;
   /** Host names allowed to call the API besides localhost. */
   allowedHosts: string[];
+  /** What a browser must send to use the API: optional locally, required on a public host. */
+  accessKey?: string;
 }
 
 export const URLS: Record<MyInvoisEnv, { api: string; portal: string }> = {
@@ -36,6 +42,12 @@ export const URLS: Record<MyInvoisEnv, { api: string; portal: string }> = {
 
 function creds(id?: string, secret?: string): Credentials | undefined {
   return id?.trim() && secret?.trim() ? { clientId: id.trim(), clientSecret: secret.trim() } : undefined;
+}
+
+function pem(file?: string, text?: string): Pem | undefined {
+  // A PEM pasted into a host's settings may arrive on one line, with \n for each line break.
+  if (text?.trim()) return { text: text.trim().replace(/\\n/g, '\n') };
+  return file?.trim() ? { file: file.trim() } : undefined;
 }
 
 export function readConfig(e: Record<string, string | undefined>): Config {
@@ -48,8 +60,8 @@ export function readConfig(e: Record<string, string | undefined>): Config {
     portalBase: URLS[env].portal,
     taxpayer: creds(e.MYINVOIS_CLIENT_ID, e.MYINVOIS_CLIENT_SECRET),
     intermediary: creds(e.MYINVOIS_INTERMEDIARY_CLIENT_ID, e.MYINVOIS_INTERMEDIARY_CLIENT_SECRET),
-    certFile: e.MYINVOIS_CERT_FILE?.trim() || undefined,
-    keyFile: e.MYINVOIS_KEY_FILE?.trim() || undefined,
+    cert: pem(e.MYINVOIS_CERT_FILE, e.MYINVOIS_CERT_PEM),
+    key: pem(e.MYINVOIS_KEY_FILE, e.MYINVOIS_KEY_PEM),
     keyPassphrase: e.MYINVOIS_KEY_PASSPHRASE || undefined,
     version: version === '1.0' || version === '1.1' ? version : undefined,
     caFile: e.MYINVOIS_CA_FILE?.trim() || undefined,
@@ -57,5 +69,6 @@ export function readConfig(e: Record<string, string | undefined>): Config {
       .split(',')
       .map((h) => h.trim().toLowerCase())
       .filter(Boolean),
+    accessKey: e.MYINVOIS_ACCESS_KEY?.trim() || undefined,
   };
 }

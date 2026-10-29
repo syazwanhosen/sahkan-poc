@@ -1,0 +1,6 @@
+// The same Node settings as server/, for tools that look for the tsconfig nearest to api/: Vercel
+// compiles the function with it, and editors check it. npm run typecheck covers api/ through
+// server/tsconfig.json.
+{
+  "extends": "../server/tsconfig.json"
+}

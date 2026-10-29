@@ -44,7 +44,7 @@ import {
 import { GENERAL_PUBLIC, blankBusiness, partyOf, withPeriodRuns } from '../data/seed';
 import { SPECS } from '../data/receipts';
 import { getState, resetState, setState, switchWorkspace } from './store';
-import { getLive } from './live';
+import { askAccessKey, getLive } from './live';
 import { navigate, type Route } from './nav';
 import { splitOf, branchName, bizById } from './select';
 import { toast } from './toast';
@@ -652,7 +652,7 @@ function actingFor(bizId: string | null | undefined): string | undefined {
 }
 
 /**
- * The ERP system in .env belongs to one taxpayer, and MyInvois rejects any document whose
+ * The server's ERP system belongs to one taxpayer, and MyInvois rejects any document whose
  * supplier TIN is another ("The authenticated TIN and documents TIN is not matching").
  * An intermediary logs in for the client's own TIN, so only the owner view can mismatch.
  */
@@ -662,12 +662,13 @@ export function tinMismatch(bizId: string): string | null {
   const b = bizById(s, bizId);
   if (s.workspace !== 'live' || s.persona === 'accountant' || !logged || !b?.tin.trim()) return null;
   if (b.tin.trim().toUpperCase() === logged) return null;
-  return `The MyInvois credentials in .env belong to TIN ${logged}, but ${b.name || 'this business'} is ${b.tin.toUpperCase()}. Register an ERP system under ${b.tin.toUpperCase()} and use its client ID and secret, or set the business to ${logged}.`;
+  return `The server's MyInvois credentials belong to TIN ${logged}, but ${b.name || 'this business'} is ${b.tin.toUpperCase()}. Register an ERP system under ${b.tin.toUpperCase()} and use its client ID and secret, or set the business to ${logged}.`;
 }
 
 /** Why nothing can be sent for this business right now, or null. */
 export function liveBlocker(bizId: string): string | null {
   if (!isLive()) return null;
+  if (getLive()?.locked) return 'The server needs its access key before anything goes to MyInvois. Enter it in Settings.';
   if (!getLive()?.configured) return "MyInvois isn't set up on the server, so nothing can be sent.";
   const mismatch = tinMismatch(bizId);
   if (mismatch) return mismatch;
@@ -1041,6 +1042,8 @@ export function openWorkspace(ws: Workspace) {
     toast('Wait a moment: LHDN is still answering a submission.', { tone: 'info' });
     return;
   }
+  // A server that asks for its access key gets it before the live workspace opens.
+  if (ws === 'live' && getLive()?.locked) return askAccessKey(() => openWorkspace('live'));
   switchWorkspace(ws);
   const s = getState();
   navigate(s.persona === 'accountant' && !s.activeBizId ? { name: 'clients' } : { name: 'today' }, { replace: true });

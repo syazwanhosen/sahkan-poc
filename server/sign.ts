@@ -3,7 +3,8 @@
 // digest the certificate and the signed properties, then add both sections at the end.
 import { X509Certificate, createHash, createPrivateKey, sign as rsaSign } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { MyInvoisError } from './client';
+import { MyInvoisError } from './client.js';
+import type { Pem } from './config.js';
 
 type Json = Record<string, unknown>;
 
@@ -17,6 +18,7 @@ const digest = (data: string | Buffer) => createHash('sha256').update(data).dige
 
 /** "C=MY\nO=LHDNM\nCN=..." as the SDK samples write it: "CN=..., O=LHDNM, C=MY". */
 const dn = (name: string) => name.split('\n').reverse().join(', ');
+const read = (p: Pem) => ('text' in p ? p.text : readFileSync(p.file));
 
 export interface SignerInfo {
   subject: string;
@@ -32,12 +34,12 @@ export interface Signer {
   sign(ubl: Json): Json;
 }
 
-export function loadSigner(certFile: string, keyFile: string, passphrase?: string): Signer {
+export function loadSigner(certPem: Pem, keyPem: Pem, passphrase?: string): Signer {
   let cert: X509Certificate;
   let key: ReturnType<typeof createPrivateKey>;
   try {
-    cert = new X509Certificate(readFileSync(certFile));
-    key = createPrivateKey({ key: readFileSync(keyFile), passphrase });
+    cert = new X509Certificate(read(certPem));
+    key = createPrivateKey({ key: read(keyPem), passphrase });
   } catch (e) {
     throw new MyInvoisError(503, 'SigningNotReady', `Can't load the signing certificate or key: ${(e as Error).message}`);
   }

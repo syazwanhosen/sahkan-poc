@@ -5,8 +5,11 @@ import type { IdType, LiveRef } from '../types';
 export type LiveEnv = LiveRef['env'];
 
 export interface LiveStatus {
+  /** MyInvois can be used from here: the server has credentials, and this browser its access key if it asks for one. */
   configured: boolean;
-  /** The taxpayer the .env credentials log in as: the supplier TIN every document must carry. */
+  /** The server has credentials, but asks for its access key (MYINVOIS_ACCESS_KEY) first. */
+  locked: boolean;
+  /** The taxpayer the server's credentials log in as: the supplier TIN every document must carry. */
   taxpayerTin?: string;
   env: LiveEnv;
   apiHost: string;
@@ -167,25 +170,58 @@ type Query = Record<string, string | number | undefined>;
 const BASE = 'api/myinvois';
 const enc = encodeURIComponent;
 
+// A server on the internet asks for its access key with every call. Only this browser keeps it.
+const KEY_STORE = 'sahkan-access-key';
+let accessKey: string | undefined;
+
+function storedKey(): string {
+  if (accessKey === undefined) {
+    try {
+      accessKey = localStorage.getItem(KEY_STORE) ?? '';
+    } catch {
+      accessKey = '';
+    }
+  }
+  return accessKey;
+}
+
+/** Remembers the server's access key in this browser, or forgets it when given ''. */
+export function setAccessKey(key: string) {
+  accessKey = key.trim();
+  try {
+    if (accessKey) localStorage.setItem(KEY_STORE, accessKey);
+    else localStorage.removeItem(KEY_STORE);
+  } catch {
+    /* no storage: the key lasts for this visit */
+  }
+}
+
 async function api<T>(method: string, path: string, o: { onBehalfOf?: string; query?: Query; body?: unknown } = {}): Promise<T> {
   const qs = new URLSearchParams();
   for (const [k, v] of Object.entries(o.query ?? {})) if (v !== undefined && v !== '') qs.set(k, String(v));
   const headers: Record<string, string> = { Accept: 'application/json' };
   if (o.body !== undefined) headers['Content-Type'] = 'application/json';
   if (o.onBehalfOf) headers['X-MyInvois-On-Behalf-Of'] = o.onBehalfOf;
+  if (storedKey()) headers.Authorization = `Bearer ${storedKey()}`;
   const q = qs.toString();
   let r: Response;
   try {
     r = await fetch(`${BASE}${path}${q ? `?${q}` : ''}`, { method, headers, body: o.body === undefined ? undefined : JSON.stringify(o.body) });
   } catch {
-    throw new ApiError(0, 'Offline', "Can't reach the Sahkan server. Check that npm run dev is still running.");
+    throw new ApiError(0, 'Offline', "Can't reach the Sahkan server. Check your connection, or that npm run dev is still running.");
   }
   const text = await r.text();
   let j: unknown;
   try {
     j = text ? JSON.parse(text) : undefined;
   } catch {
-    throw new ApiError(r.status, 'NoServer', 'This copy of the app has no MyInvois server behind it.');
+    // Not JSON: no server behind this copy (the single-file build), or the host's own error page.
+    const words: Record<number, string> = {
+      413: 'That is too much to send at once. Send fewer documents.',
+      504: 'The server took too long to answer. Try again.',
+    };
+    const why = words[r.status] ?? (r.status >= 500 ? `The server failed with HTTP ${r.status}. Its log says why.` : 'This copy of the app has no MyInvois server behind it.');
+    throw new ApiError(r.status, 'NoServer', why);
   }
   if (!r.ok) {
     const e = (j as { error?: { code?: string; message?: string; details?: ApiErrorDetail[]; retryAfter?: number } })?.error;

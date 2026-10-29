@@ -2,8 +2,8 @@
 // takes. The single-file build has no server: it runs the simulated MyInvois only.
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Plugin } from 'vite';
-import { readConfig } from './config';
-import { createHandler } from './handler';
+import { readConfig } from './config.js';
+import { createHandler } from './handler.js';
 
 export function myinvoisApi(env: Record<string, string>): Plugin {
   const cfg = readConfig(env);
@@ -14,7 +14,9 @@ export function myinvoisApi(env: Record<string, string>): Plugin {
   };
   const summary = () => {
     const who = [cfg.taxpayer && 'taxpayer', cfg.intermediary && 'intermediary'].filter(Boolean).join(' and ');
-    return who ? `MyInvois ${cfg.env}: ${who} system set up` : 'MyInvois: no credentials in .env, so only the simulated demo is available';
+    return who
+      ? `MyInvois ${cfg.env}: ${who} system set up${cfg.accessKey ? ', behind the access key' : ''}`
+      : 'MyInvois: no credentials in .env, so only the simulated demo is available';
   };
   return {
     name: 'sahkan-myinvois',

@@ -4,7 +4,7 @@ import http from 'node:http';
 import https from 'node:https';
 import tls from 'node:tls';
 import { readFileSync } from 'node:fs';
-import type { Config, Credentials } from './config';
+import type { Config, Credentials } from './config.js';
 
 export interface ErrorDetail {
   code?: string;
@@ -199,8 +199,8 @@ export function createClient(cfg: Config) {
       503,
       'NotConfigured',
       onBehalfOf
-        ? 'No intermediary system is set up. Add MYINVOIS_INTERMEDIARY_CLIENT_ID and MYINVOIS_INTERMEDIARY_CLIENT_SECRET to .env.'
-        : 'No taxpayer system is set up. Add MYINVOIS_CLIENT_ID and MYINVOIS_CLIENT_SECRET to .env.',
+        ? 'No intermediary system is set up. Set MYINVOIS_INTERMEDIARY_CLIENT_ID and MYINVOIS_INTERMEDIARY_CLIENT_SECRET.'
+        : 'No taxpayer system is set up. Set MYINVOIS_CLIENT_ID and MYINVOIS_CLIENT_SECRET.',
     );
   }
 

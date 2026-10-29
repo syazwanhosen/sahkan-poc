@@ -14,6 +14,7 @@ import {
   House,
   Inbox,
   Info,
+  KeyRound,
   ListChecks,
   Menu,
   Package,
@@ -32,10 +33,10 @@ import { useApp } from './state/store';
 import { navigate, useRoute, type Route } from './state/nav';
 import { activeBiz, attention, clientState } from './state/select';
 import { openClient, openWorkspace, resetDemo, setGuideOpen, switchPersona } from './state/actions';
-import { useLive } from './state/live';
+import { askAccessKey, closeAccessKey, tryAccessKey, useAccessKeyAsk, useLive } from './state/live';
 import { dismiss, useToasts } from './state/toast';
 import { date, plural, time } from './lib/format';
-import { Avatar, Button, Modal, cx, ic, useNow } from './ui';
+import { Avatar, Button, Field, Input, Modal, cx, ic, useNow } from './ui';
 
 // ---------------------------------------------------------------------------
 // Navigation
@@ -224,7 +225,9 @@ function SideContent({ onNavigate }: { onNavigate?: () => void }) {
                 : s.workspace === 'live'
                   ? live?.configured
                     ? 'Connected as the taxpayer'
-                    : 'Not set up on the server'
+                    : live?.locked
+                      ? 'Needs the access key'
+                      : 'Not set up on the server'
                   : 'Sample data only'}
             </span>
           </span>
@@ -427,6 +430,52 @@ function ResetDialog({ open, onClose }: { open: boolean; onClose: () => void }) 
   );
 }
 
+/** Asks for the server's access key (MYINVOIS_ACCESS_KEY) whenever askAccessKey() wants it. */
+function AccessKeyDialog() {
+  const asking = useAccessKeyAsk();
+  const [key, setKey] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    setKey('');
+    setError(null);
+  }, [asking]);
+  const submit = async () => {
+    if (!key.trim() || busy) return;
+    setBusy(true);
+    setError(await tryAccessKey(key));
+    setBusy(false);
+  };
+  return (
+    <Modal
+      id="key-dialog"
+      open={!!asking}
+      onClose={closeAccessKey}
+      title="Enter the access key"
+      sub="The MyInvois server asks for its access key before it sends anything to LHDN."
+      foot={
+        <>
+          <Button onClick={closeAccessKey}>Cancel</Button>
+          <Button variant="primary" busy={busy} disabled={!key.trim()} icon={ic(KeyRound, 'ico-sm')} onClick={submit} id="key-save">
+            Connect
+          </Button>
+        </>
+      }
+    >
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          void submit();
+        }}
+      >
+        <Field label="Access key" htmlFor="key-input" error={error} hint="The MYINVOIS_ACCESS_KEY set on the server. This browser keeps it.">
+          <Input id="key-input" type="password" value={key} invalid={!!error} autoComplete="off" spellCheck={false} onChange={(e) => setKey(e.target.value)} />
+        </Field>
+      </form>
+    </Modal>
+  );
+}
+
 // ---------------------------------------------------------------------------
 
 export function Shell({ children }: { children: ReactNode }) {
@@ -481,9 +530,16 @@ export function Shell({ children }: { children: ReactNode }) {
                   ? 'Live on MyInvois production. What you submit is filed with LHDN.'
                   : "MyInvois sandbox. What you submit goes to LHDN's test system, not for tax."}
                 {live === null && ' The MyInvois server is not reachable.'}
+                {live?.locked && ' The server needs its access key.'}
               </span>
             </span>
             <span className="banner-actions">
+              {live?.locked && (
+                <button type="button" className="banner-btn" onClick={() => askAccessKey()} id="key-open">
+                  {ic(KeyRound, 'ico-sm')}
+                  Enter access key
+                </button>
+              )}
               <button type="button" className="banner-btn" onClick={() => openWorkspace('demo')} id="to-demo">
                 {ic(FlaskConical, 'ico-sm')}
                 Back to the demo
@@ -500,7 +556,7 @@ export function Shell({ children }: { children: ReactNode }) {
                 </span>
               </span>
               <span className="banner-actions">
-                {live?.configured && (
+                {(live?.configured || live?.locked) && (
                   <button type="button" className="banner-btn" onClick={() => openWorkspace('live')} id="to-live">
                     {ic(PlugZap, 'ico-sm')}
                     Use MyInvois {live.env}
@@ -537,6 +593,7 @@ export function Shell({ children }: { children: ReactNode }) {
       )}
       <Toasts />
       <ResetDialog open={resetOpen} onClose={() => setResetOpen(false)} />
+      <AccessKeyDialog />
     </div>
   );
 }

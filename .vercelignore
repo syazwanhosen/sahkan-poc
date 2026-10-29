@@ -1,0 +1,10 @@
+# What `vercel deploy` must not upload. The CLI doesn't read .gitignore, and it skips .env.local
+# but not .env, so the MyInvois credentials and signing keys are listed here too.
+.env
+.env.*
+!.env.example
+*.pem
+*.p12
+*.pfx
+*.key
+dist/

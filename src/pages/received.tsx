@@ -286,7 +286,9 @@ export function ReceivedPage({ id }: { id?: string }) {
             {isLive
               ? live?.configured
                 ? `E-invoices issued to ${biz.tin || 'this TIN'} in the last 30 days show up here.`
-                : 'MyInvois is not set up on the server.'
+                : live?.locked
+                  ? 'Enter the access key to see what MyInvois holds.'
+                  : 'MyInvois is not set up on the server.'
               : 'Received e-invoices with this status will show up here.'}
           </Empty>
         )}
