@@ -8,7 +8,7 @@ Proof-of-concept of an LHDN e-invoicing web app. It has two workspaces:
 ## Run
 
 ```bash
-npm install
+npm ci             # installs the packages for this computer's OS (macOS, Windows, Linux)
 npm run dev        # http://localhost:5173, with the MyInvois server
 npm run build      # type-check + single-file build in dist/index.html
 npm run artifact   # build + dist/sahkan-demo.html (claude.ai artifact page)
@@ -31,8 +31,8 @@ The live workspace is kept in localStorage, so it survives closing the browser. 
 
 The page is static, and the MyInvois server runs as one Vercel Function (`api/myinvois.ts`); `vercel.json` sends every `/api/myinvois/*` call to it.
 
-1. Import the repository in Vercel, or run `vercel` in this folder. `vercel.json` holds the settings: the Vite build, a clean `npm ci` (the committed `node_modules` has macOS binaries), and the function in Singapore (`sin1`), the region closest to LHDN.
-2. In the project's **Settings > Environment Variables**, add `MYINVOIS_ENV`, `MYINVOIS_CLIENT_ID`, `MYINVOIS_CLIENT_SECRET` and `MYINVOIS_ACCESS_KEY`, a long random value such as the output of `openssl rand -base64 32`. The intermediary system is optional, as in `.env.example`. Pasting your `.env` is fine: the function ignores `MYINVOIS_CA_FILE`, and `MYINVOIS_ALLOWED_HOSTS` only matters locally.
+1. Import the repository in Vercel, or run `vercel` in this folder. `vercel.json` holds the settings: the Vite build, a clean `npm ci`, and the function in Singapore (`sin1`), the region closest to LHDN.
+2. In the project's **Settings > Environment Variables**, add `MYINVOIS_ENV`, `MYINVOIS_CLIENT_ID`, `MYINVOIS_CLIENT_SECRET` and `MYINVOIS_ACCESS_KEY`, a long random value such as the output of `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"` (works on Windows too). The intermediary system is optional, as in `.env.example`. Pasting your `.env` is fine: the function ignores `MYINVOIS_CA_FILE`, and `MYINVOIS_ALLOWED_HOSTS` only matters locally.
 3. To send signed version 1.1 documents, paste the certificate and key themselves into `MYINVOIS_CERT_PEM` and `MYINVOIS_KEY_PEM`: a deployment has no files for `MYINVOIS_CERT_FILE`. One line with `\n` for each line break works too.
 4. Redeploy after changing a variable. A deployment keeps the values it was built with.
 

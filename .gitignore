@@ -8,3 +8,6 @@
 *.key
 
 dist/
+
+# Each computer installs its own (npm ci): the packages include per-OS binaries.
+node_modules/
